@@ -1,0 +1,5 @@
+# Python3.12 or higher
+
+python-telegram-bot
+
+
