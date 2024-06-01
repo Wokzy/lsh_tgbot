@@ -4,6 +4,8 @@ IMAGES_DIR = 'images/'
 
 EVENTS_FNAME = 'events_data.bin'
 
+ROOT_USERS = []
+
 
 class BUTTON_NAMINGS:
 	echo = "ECHO"

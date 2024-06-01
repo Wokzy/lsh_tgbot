@@ -5,7 +5,7 @@ import pickle
 import hashlib
 
 from datetime import datetime
-from contants import EVENTS_DIR, IMAGES_DIR, EVENTS_FNAME
+from constants import EVENTS_DIR, IMAGES_DIR, EVENTS_FNAME
 
 
 class Event:
