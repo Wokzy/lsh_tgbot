@@ -3,6 +3,8 @@ Bot backend utilities
 """
 import json
 
+from datetime import datetime
+
 class clr:
 	"""
 		Logging colors
@@ -24,3 +26,10 @@ def read_config(filename:str = 'config.json') -> dict:
 
 	return config
 
+
+def read_date_from_message(message:str, form = "%H:%M %d.%m"):
+	try:
+		date = datetime.strptime(message, form)
+		return date.replace(datetime.now().year)
+	except ValueError:
+		return None

@@ -1,8 +1,8 @@
 
 import events
 
-from utils import clr, read_config
-from constants import BUTTON_NAMINGS, ROOT_USERS
+from constants import BUTTON_NAMINGS
+from utils import clr, read_config, read_date_from_message
 
 from telegram import (
 	KeyboardButton,
@@ -12,8 +12,7 @@ from telegram import (
 	InlineKeyboardButton,
 	InlineKeyboardMarkup,
 	# ReplyKeyboardRemove,
-	Update,
-	User
+	Update
 )
 
 from telegram.ext import (
@@ -31,70 +30,31 @@ from telegram.ext import (
 __author__ = 'Yegor Yershov'
 
 
+class BotUser:
+	def __init__(self, is_root:bool = False):
+		"""
+		states:
+				waining_for_password (root)
+				waining_for_event_name
+				waining_for_event_date
+				waining_for_event_description (with picture)
+		"""
 
-# class Session:
-# 	def __init__(self, chat_id:int, is_root:bool = False):
-# 		"""
-# 			IsRoot flag is used to determine users with root privileges
+		self.is_root = is_root
+		self.current_state = None
 
-# 			States:
-# 				none
-# 				main_menu
-# 		"""
-
-# 		self.chat_id = chat_id
-# 		self.state = 'none'
-
-# 		self.is_root = True # Development state
-# 		self.event_creation_state = 0
-
-# 		self.notifications = {} # dict with events to be notified about (TODO)
-
-
-# 	async def main_menu(self, update, context) -> None:
-# 		""" Main bot menu """
-
-# 		self.state = 'main_menu'
-
-# 		keyboard = [[KeyboardButton(BUTTON_NAMINGS.echo), KeyboardButton(BUTTON_NAMINGS.get_events)]]
-# 		if self.is_root:
-# 			keyboard[0][0].append(KeyboardButton(BUTTON_NAMINGS.create_event))
-
-# 		keyboard = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
-
-# 		await context.bot.send_message(update.message.chat.id, text = 'Welcome!', reply_markup = keyboard)
-
-
-# 	async def handle_message(self, update, context) -> None:
-# 		match self.state:
-# 			case 'main_menu':
-# 				await self.main_menu_handler(update, context)
-# 			case 'event_creation':
-# 				if self.event_creation_state == 0:
-# 					name, picture_fname = events.read_event_data_from_user(update, context)
-# 					events.create_event(CURRENT_EVENTS, name = 'name', date = 'test', info = 'description', picture = picture_fname)
-# 					self.event_creation_state = -1
-# 					self.state = 'main_menu'
-
-
-# 	async def main_menu_handler(self, update, context) -> None:
-# 		if update.message.text == BUTTON_NAMINGS.create_event and self.is_root:
-# 			self.state = 'event_creation'
-# 			await context.bot.send_message(update.message.chat.id, text = "Please send picture and description for an event: ")
-# 		elif update.message.text == BUTTON_NAMINGS.echo:
-# 			await context.bot.send_message(update.message.chat.id, text = update.message.text)
-# 		elif update.message.text == BUTTON_NAMINGS.get_events:
-# 			self.state = 'event_printing'
-# 		else:
-# 			await context.bot.send_message(update.message.chat.id, text = "Unrecognized request")
+		# FIXME
+		self.event_creation_data = {}
+		self.created_event = None
 
 
 class Bot:
 	def __init__(self):
 		"""
-			#### self.sessions = {user_id:session_class}
+			self.connected_users = {user_id: {'is_root':bool, 'current_state':str}}
+			
 		"""
-		self.cached_users = []
+		self.connected_users = {}
 
 		self.current_events = events.load_events()
 
@@ -102,9 +62,9 @@ class Bot:
 	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 		user = update.message.from_user
 
-		if user not in self.cached_users:
+		if user.id not in self.connected_users:
 			print(f'{clr.yellow}{user.first_name} {user.last_name} {user.username} [{user.id}] Has just launched the bot')
-			self.cached_users.append(user)
+			self.connected_users[context._user_id] = BotUser()
 
 		await self.main_menu(update, context)
 
@@ -112,11 +72,39 @@ class Bot:
 
 
 	async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-		if update.message.from_user not in self.cached_users:
-			await context.bot.send_message(update.message.chat.id, "Enter /start to start bot")
+		answer_text = None
+
+		if update.message.from_user.id not in self.connected_users.keys():
+			answer_text = "Enter /start to start bot"
 		else:
-			# await self.sessions[update.message.from_user].handle_message(update, context)
-			await context.bot.send_message(update.message.chat.id, update.message.text)
+			user = self.connected_users[context._user_id]
+			if user.current_state == 'waining_for_event_name':
+				user.event_creation_data['name'] = update.message.text
+				user.current_state = 'waining_for_event_date'
+				answer_text = "Send event time in format HH:MM d.m (Example 14:00 28.08)"
+			elif user.current_state == 'waining_for_event_date':
+				date = read_date_from_message(update.message.text)
+				if not date:
+					answer_text = "Invalid date format, please try again"
+				else:
+					user.event_creation_data['date'] = date
+					user.current_state = 'waining_for_event_description'
+					answer_text = 'Write a description for an event and send photo optinally'
+			elif user.current_state == 'waining_for_event_description':
+				user.event_creation_data['description'] = update.message.text
+
+				#Load picture (TODO)
+				user.created_event = events.Event(**user.event_creation_data)
+				await user.created_event.print_event(update, context)
+
+				keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.confirm_event_creation, callback_data='confirm_event_creation')],
+							[InlineKeyboardButton(BUTTON_NAMINGS.decline_event_creation, callback_data='decline_event_creation')]]
+				keyboard = InlineKeyboardMarkup(keyboard)
+
+				await context.bot.send_message(context._chat_id, text = "Is everything correct?", reply_markup = keyboard)
+
+		if answer_text is not None:
+			await context.bot.send_message(update.message.chat.id, text = answer_text)
 
 
 	async def echo(self, update, context) -> None:
@@ -127,38 +115,105 @@ class Bot:
 		await context.bot.answer_callback_query(update.callback_query.id)
 
 
-	async def main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+	async def main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, force_message = False) -> None:
+		self.connected_users[context._user_id].current_state = None
+
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')], 
 					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')]]
 
-		if context._user_id in ROOT_USERS or True: # TDDO
+		if self.connected_users[context._user_id].is_root or True: # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'create_event')])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
 		response_text = 'Welcome!'
 
-		if update.callback_query:
+		if update.callback_query and not force_message:
 			await update.callback_query.edit_message_text(text = response_text, reply_markup = keyboard)
 			await context.bot.answer_callback_query(update.callback_query.id)
 		else:
 			await context.bot.send_message(context._chat_id, text = response_text, reply_markup = keyboard)
 
+
 	async def get_events(self, update, context) -> None:
-		keyboard = []
-		for i in range(1, 27):
-			# TODO CALLBACKS
-			keyboard.append([InlineKeyboardButton(f'{i}.08', callback_data = 'echo')])
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		for key in self.current_events.keys():
+			keyboard.append([InlineKeyboardButton(key, callback_data = f'show_events_on_day {key}')])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
-		await context.bot.send_message(context._chat_id, text = 'Please select a day:', reply_markup = keyboard)
+		await update.callback_query.edit_message_text(text = 'Please select a day:', reply_markup = keyboard)
 		await context.bot.answer_callback_query(update.callback_query.id)
+
+
+	async def show_events_on_day(self, update, context) -> None:
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+
+		day = update.callback_query.data.split(' ')[1]
+		for key in self.current_events[day]:
+			keyboard.append([InlineKeyboardButton(key, callback_data = f'print_event {day} {key}')])
+
+		keyboard = InlineKeyboardMarkup(keyboard)
+		await update.callback_query.edit_message_text(text = 'Please select an event for this day:', reply_markup = keyboard)
+		await context.bot.answer_callback_query(update.callback_query.id)
+
+
+	async def print_event(self, update, context) -> None:
+		day, time = tuple(update.callback_query.data.split(' ')[1::])
+		await self.current_events[day][time].print_event(update, context)
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+		await self.main_menu(update, context, force_message = True)
 
 
 	async def create_event(self, update, context) -> None:
-		await context.bot.send_message(context._chat_id, text = 'This function is not ready yet(')
+		if self.connected_users[context._user_id].current_state is None:
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+			keyboard = InlineKeyboardMarkup(keyboard)
+
+			self.connected_users[context._user_id].current_state = 'waining_for_event_name'
+			await update.callback_query.edit_message_text(text = 'Send a name for an event: ', reply_markup = keyboard)
+
+
 		await context.bot.answer_callback_query(update.callback_query.id)
+
+
+	async def confirm_event_creation(self, update, context):
+
+		if context._user_id not in self.connected_users.keys():
+			await context.bot.answer_callback_query(update.callback_query.id)
+			return
+
+		user = self.connected_users[context._user_id]
+		if user.created_event is None:
+			await self.main_menu(update, context)
+			return
+
+		if user.created_event.string_date() not in self.current_events:
+			self.current_events[user.created_event.string_date()] = {}
+
+		self.current_events[user.created_event.string_date()][user.created_event.string_time()] = user.created_event
+		events.save_events(self.current_events)
+
+		print(f"Event was created, current_amount: {len(self.current_events)}")
+
+		await context.bot.answer_callback_query(update.callback_query.id, text = f"Event was succesfully created on {user.created_event.string_datetime()}")
+		await self.main_menu(update, context)
+
+
+	async def decline_event_creation(self, update, context):
+
+		if context._user_id not in self.connected_users.keys():
+			await context.bot.answer_callback_query(update.callback_query.id)
+			return
+
+		user = self.connected_users[context._user_id]
+
+		user.created_event = None
+		user.event_creation_data = {}
+
+		await context.bot.answer_callback_query(update.callback_query.id, text = f"You've canceled event creation")
+		await self.main_menu(update, context)
 
 
 def main():
@@ -170,11 +225,14 @@ def main():
 	application.add_handler(CommandHandler("start", bot.start_session))
 	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
 
+	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
 	application.add_handler(CallbackQueryHandler(bot.main_menu, pattern='main_menu'))
 	application.add_handler(CallbackQueryHandler(bot.create_event, pattern='create_event'))
 	application.add_handler(CallbackQueryHandler(bot.get_events, pattern='get_events'))
-	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
-	#application.add_handler(PollAnswerHandler(receive_poll_answer))
+	application.add_handler(CallbackQueryHandler(bot.print_event, pattern='print_event'))
+	application.add_handler(CallbackQueryHandler(bot.show_events_on_day, pattern='show_events_on_day'))
+	application.add_handler(CallbackQueryHandler(bot.confirm_event_creation, pattern='confirm_event_creation'))
+	application.add_handler(CallbackQueryHandler(bot.decline_event_creation, pattern='decline_event_creation'))
 
 	print(f'{clr.cyan}Bot is online')
 
