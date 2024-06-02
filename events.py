@@ -9,10 +9,10 @@ from constants import EVENTS_DIR, IMAGES_DIR, EVENTS_FNAME#, TOTAL_DAYS_WITH_EVE
 
 
 class Event:
-	def __init__(self, name:str, date:datetime, description:str, picture_fname:str = None):
+	def __init__(self, name:str, date:datetime, description:str, picture_file_id:str = None):
 		self.name = name
 		self.date = date
-		self.picture_fname = picture_fname
+		self.picture_file_id = picture_file_id
 		self.description = description
 
 
@@ -30,14 +30,31 @@ class Event:
 		# TODO
 
 		text = f"<b>{self.name}</b>\n\n{self.description}\n\n<b>{self.string_datetime()}</b>"
-		await context.bot.send_message(context._chat_id, text = text, parse_mode="HTML")
+
+		if self.picture_file_id is not None:
+			photo = await context.bot.getFile(self.picture_file_id)
+			if not photo:
+				photo = open(os.path.join(IMAGES_DIR, fname), 'rb')
+			else:
+				photo = self.picture_file_id
+
+			await context.bot.send_photo(context._chat_id, caption = text, parse_mode="HTML", photo = photo)
+		else:
+			await context.bot.send_message(context._chat_id, text = text, parse_mode="HTML")
 
 
-def save_event_picture(event:Event):
-	# TODO
-	fname = f'{random.randint(1, 1<<256)}{datetime.datetime.now().timestamp()}'.encode('utf-8')
-	fname = hashlib.sha3_256(fname).hexdigest()
-	pass
+async def save_event_picture(bot, picture) -> str:
+	""" Returns filename of picture """
+	# fname = f'{random.randint(1, 1<<256)}{datetime.datetime.now().timestamp()}'.encode('utf-8')
+	# fname = hashlib.sha3_256(fname).hexdigest()
+
+	fname = picture.file_id
+
+	file = await bot.getFile(picture)
+	file_path = os.path.join(IMAGES_DIR, fname)
+	await file.download_to_drive(file_path)
+
+	return fname
 
 
 def load_events() -> dict:

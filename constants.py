@@ -8,8 +8,8 @@ TOTAL_DAYS_WITH_EVENTS = 27
 
 class BUTTON_NAMINGS:
 	echo = "ECHO"
-	create_event = "Create Event"
-	get_events = "Get events"
-	main_menu = "Main menu"
-	confirm_event_creation = "Confirm event creation"
-	decline_event_creation = "Decline event creation (return to main menu)"
+	create_event = "Создать мероприятие"
+	get_events = "Список мероприятий"
+	main_menu = "Главное меню"
+	confirm_event_creation = "Подтвердить создание мероприятия"
+	decline_event_creation = "Отменить создание мероприятия, вернуться в главное меню"
