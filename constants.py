@@ -4,7 +4,7 @@ IMAGES_DIR = 'images/'
 
 EVENTS_FNAME = 'events_data.bin'
 
-TOTAL_DAYS_WITH_EVENTS = 27
+TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
 
 DATETIME_INPUT_FORMAT = "%H:%M %d.%m"
 
@@ -21,6 +21,8 @@ class BUTTON_NAMINGS:
 	change_event_picture = "Изменить картинку"
 	modify_event = "Редактировать мероприятие"
 	remove_event = "Удалить мероприятие"
+	confirm_removal = "Подтвердить удаление"
+	decline_removal = "Не удалять"
 
 
 MISC_MESSAGES = {
@@ -28,4 +30,5 @@ MISC_MESSAGES = {
 	"event_dating" : f"Введите дату и время мероприятия в формате {DATETIME_INPUT_FORMAT}",
 	"event_picturing" : "Отправьте фото мероприятия",
 	"event_descriptioning" : "Отправьте описание мероприятия",
+	"removal_approvement": "Вы уверены в том, что хотите удалить данное мероприятие?"
 	}

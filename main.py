@@ -109,7 +109,7 @@ class Bot:
 
 		response_text = 'Welcome!'
 
-		if update.callback_query and not force_message and update.callback_query.data == 'main_menu':
+		if update.callback_query and not force_message:# and update.callback_query.data == 'main_menu':
 			await update.callback_query.edit_message_text(text = response_text, reply_markup = keyboard)
 		else:
 			await context.bot.send_message(context._chat_id, text = response_text, reply_markup = keyboard)
@@ -145,10 +145,14 @@ class Bot:
 		day, time = tuple(update.callback_query.data.split(' ')[1::])
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message'),
-					 InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
-					 					callback_data=f'event_modification change_existing_event {day} {time}'),
-					 #InlineKeyboardButton(BUTTON_NAMINGS.remove_event, callback_data=f'remove_event {day} {time}'),
 					]]
+
+		if self.connected_users[context._user_id].is_root or True:
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
+					 				callback_data=f'event_modification change_existing_event {day} {time}'),
+							InlineKeyboardButton(BUTTON_NAMINGS.remove_event, 
+									callback_data=f'remove_event {day} {time} enquire'),
+							])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
@@ -156,6 +160,31 @@ class Bot:
 
 		await context.bot.answer_callback_query(update.callback_query.id)
 		#await self.main_menu(update, context, force_message = True)
+
+
+	async def remove_event(self, update, context) -> None:
+		day, time, status = update.callback_query.data.split(' ')[1::]
+
+		if status == 'enquire':
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.confirm_removal, 
+											callback_data=f'remove_event {day} {time} confirm'),
+						 InlineKeyboardButton(BUTTON_NAMINGS.decline_removal,
+											callback_data=f'remove_event {day} {time} decline'),
+					]]
+
+			keyboard = InlineKeyboardMarkup(keyboard)
+			await context.bot.send_message(context._chat_id,
+											text = MISC_MESSAGES['removal_approvement'],
+											reply_markup = keyboard)
+			await context.bot.answer_callback_query(update.callback_query.id)
+		elif status == 'confirm':
+			del self.current_events[day][time]
+			events.save_events(self.current_events)
+			await context.bot.answer_callback_query(update.callback_query.id, text = "Мероприятие было удалено")
+			await self.main_menu(update, context)
+		elif status == 'decline':
+			await context.bot.answer_callback_query(update.callback_query.id, text = "Вы отменили удаление мероприятия")
+			await self.main_menu(update, context)
 
 
 	async def _change_user_state(self, update, context) -> None:
@@ -233,9 +262,7 @@ class Bot:
 			await context.bot.answer_callback_query(update.callback_query.id)
 			return
 
-		user = self.connected_users[context._user_id]
-
-		user.modified_event = None
+		self.connected_users[context._user_id].modified_event = None
 
 		await context.bot.answer_callback_query(update.callback_query.id, text = f"Вы отменили редактирование мероприятия")
 		await self.main_menu(update, context, force_message = True)
@@ -259,6 +286,7 @@ def main():
 	application.add_handler(CallbackQueryHandler(bot.decline_modified_event, pattern='decline_modified_event'))
 	application.add_handler(CallbackQueryHandler(bot.event_modification, pattern='event_modification'))
 	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
+	application.add_handler(CallbackQueryHandler(bot.remove_event, pattern='remove_event'))
 
 
 	print(f'{clr.cyan}Bot is online')
