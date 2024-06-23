@@ -1,7 +1,8 @@
 
 import events
+import bot_functions
 
-from constants import BUTTON_NAMINGS
+from constants import BUTTON_NAMINGS, MISC_MESSAGES
 from utils import clr, read_config, read_date_from_message
 
 from telegram import (
@@ -34,18 +35,18 @@ class BotUser:
 	def __init__(self, is_root:bool = False):
 		"""
 		states:
-				waining_for_password (root)
-				waining_for_event_name
-				waining_for_event_date
-				waining_for_event_description (with picture)
+				waiting_for_password (root)
+				waiting_for_event_name
+				waiting_for_event_date
+				waiting_for_event_description (with picture)
 		"""
 
 		self.is_root = is_root
 		self.current_state = None
 
 		# FIXME
-		self.event_creation_data = {}
-		self.created_event = None
+		#self.event_creation_data = {}
+		self.modified_event = None
 
 
 class Bot:
@@ -78,34 +79,8 @@ class Bot:
 			answer_text = "Enter /start to start bot"
 		else:
 			user = self.connected_users[context._user_id]
-			if user.current_state == 'waining_for_event_name':
-				user.event_creation_data['name'] = update.message.text
-				user.current_state = 'waining_for_event_date'
-				answer_text = "Отправьте время мероприятия в формате HH:MM d.m (Например 14:00 28.08)"
-			elif user.current_state == 'waining_for_event_date':
-				date = read_date_from_message(update.message.text)
-				if not date:
-					answer_text = "Неверный формат, попробуйте ещё раз"
-				else:
-					user.event_creation_data['date'] = date
-					user.current_state = 'waining_for_event_description'
-					answer_text = 'Пришлите фотографию (опционально) и напишите описание к мероприятию (одним сообщением)'
-			elif user.current_state == 'waining_for_event_description':
-				user.event_creation_data['description'] = update.message.text
-
-				if update.message.photo:
-					user.event_creation_data['description'] = update.message.caption
-					user.event_creation_data['picture_file_id'] = await events.save_event_picture(bot = context.bot, 
-																								picture = update.message.photo[-1])
-
-				user.created_event = events.Event(**user.event_creation_data)
-				await user.created_event.print_event(update, context)
-
-				keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.confirm_event_creation, callback_data='confirm_event_creation')],
-							[InlineKeyboardButton(BUTTON_NAMINGS.decline_event_creation, callback_data='decline_event_creation')]]
-				keyboard = InlineKeyboardMarkup(keyboard)
-
-				await context.bot.send_message(context._chat_id, text = "Введённые вами данные верны?", reply_markup = keyboard)
+			if user.modified_event is not None:
+				await self.event_modification(update, context)
 
 		if answer_text is not None:
 			await context.bot.send_message(update.message.chat.id, text = answer_text)
@@ -121,22 +96,25 @@ class Bot:
 
 	async def main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, force_message = False) -> None:
 		self.connected_users[context._user_id].current_state = None
+		self.connected_users[context._user_id].modified_event = None
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')], 
 					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')]]
 
 		if self.connected_users[context._user_id].is_root or True: # TDDO
-			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'create_event')])
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
 		response_text = 'Welcome!'
 
-		if update.callback_query and not force_message:
+		if update.callback_query and not force_message and update.callback_query.data == 'main_menu':
 			await update.callback_query.edit_message_text(text = response_text, reply_markup = keyboard)
-			await context.bot.answer_callback_query(update.callback_query.id)
 		else:
 			await context.bot.send_message(context._chat_id, text = response_text, reply_markup = keyboard)
+
+		if update.callback_query is not None:
+			await context.bot.answer_callback_query(update.callback_query.id)
 
 
 	async def get_events(self, update, context) -> None:
@@ -164,52 +142,88 @@ class Bot:
 
 	async def print_event(self, update, context) -> None:
 		day, time = tuple(update.callback_query.data.split(' ')[1::])
-		await self.current_events[day][time].print_event(update, context)
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message'),
+					 InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
+					 					callback_data=f'event_modification change_existing_event {day} {time}'),
+					 #InlineKeyboardButton(BUTTON_NAMINGS.remove_event, callback_data=f'remove_event {day} {time}'),
+					]]
+
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		await self.current_events[day][time].print_event(update, context, reply_markup = keyboard)
 
 		await context.bot.answer_callback_query(update.callback_query.id)
+		#await self.main_menu(update, context, force_message = True)
+
+
+	async def _change_user_state(self, update, context) -> None:
+		# FIXME
+		callback_query = update.callback_query.data.split(' ')[1::]
+		self.connected_users[context._user_id].current_state = callback_query[0]
+		if len(callback_query) > 1:
+			await context.bot.send_message(context._chat_id, text = MISC_MESSAGES[callback_query[1]])
+		await context.bot.answer_callback_query(update.callback_query.id)
+
+
+	async def event_modification(self, update, context) -> None:
+		if context._user_id not in self.connected_users.keys():
+			await context.bot.answer_callback_query(update.callback_query.id)
+			return
+
+		state = await bot_functions.handle_event_modification_callback_query(self, update, context)
+
+		keyboard = [
+					[InlineKeyboardButton(BUTTON_NAMINGS.decline_modified_event,
+											callback_data='decline_modified_event')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.change_event_date,
+											callback_data='_change_user_state event_date event_dating')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.change_event_name,
+											callback_data='_change_user_state event_name event_naming')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.change_event_description,
+											callback_data='_change_user_state event_description event_descriptioning')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.change_event_picture,
+											callback_data='_change_user_state event_picture event_picturing')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.save_modified_event,
+											callback_data='save_modified_event')],
+					]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		#self.connected_users[context._user_id].current_state = 'waiting_for_event_name'
+
+		if state == 'new_event':
+			await update.callback_query.edit_message_text(text = "Приступайте к созданию мероприятия: ", reply_markup = keyboard)
+		else:
+			await self.connected_users[context._user_id].modified_event.print_event(update, context, reply_markup = keyboard)
+
+		if update.callback_query is not None:
+			await context.bot.answer_callback_query(update.callback_query.id)
+
+
+	async def save_modified_event(self, update, context):
+
+		if context._user_id not in self.connected_users.keys():
+			await context.bot.answer_callback_query(update.callback_query.id)
+			return
+
+		user = self.connected_users[context._user_id]
+		if user.modified_event is None:
+			await self.main_menu(update, context, force_message = True)
+			return
+
+		if user.modified_event.string_date() not in self.current_events:
+			self.current_events[user.modified_event.string_date()] = {}
+
+		self.current_events[user.modified_event.string_date()][user.modified_event.string_time()] = user.modified_event
+		events.save_events(self.current_events)
+
+		print(f"Event was saved by {context._user_id}, current amount: {len(self.current_events)}")
+
+		await context.bot.answer_callback_query(update.callback_query.id, text = f"Мероприятие было успешно сохранено на {user.modified_event.string_datetime()}")
 		await self.main_menu(update, context, force_message = True)
 
 
-	async def create_event(self, update, context) -> None:
-		if context._user_id not in self.connected_users.keys():
-			await context.bot.answer_callback_query(update.callback_query.id)
-			return
-
-		if self.connected_users[context._user_id].current_state is None:
-			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-			keyboard = InlineKeyboardMarkup(keyboard)
-
-			self.connected_users[context._user_id].current_state = 'waining_for_event_name'
-			await update.callback_query.edit_message_text(text = 'Отправьте название мероприятия: ', reply_markup = keyboard)
-
-
-		await context.bot.answer_callback_query(update.callback_query.id)
-
-
-	async def confirm_event_creation(self, update, context):
-
-		if context._user_id not in self.connected_users.keys():
-			await context.bot.answer_callback_query(update.callback_query.id)
-			return
-
-		user = self.connected_users[context._user_id]
-		if user.created_event is None:
-			await self.main_menu(update, context)
-			return
-
-		if user.created_event.string_date() not in self.current_events:
-			self.current_events[user.created_event.string_date()] = {}
-
-		self.current_events[user.created_event.string_date()][user.created_event.string_time()] = user.created_event
-		events.save_events(self.current_events)
-
-		print(f"Event was created by {context._user_id}, current amount: {len(self.current_events)}")
-
-		await context.bot.answer_callback_query(update.callback_query.id, text = f"Мероприятие было успешно создано на {user.created_event.string_datetime()}")
-		await self.main_menu(update, context)
-
-
-	async def decline_event_creation(self, update, context):
+	async def decline_modified_event(self, update, context):
 
 		if context._user_id not in self.connected_users.keys():
 			await context.bot.answer_callback_query(update.callback_query.id)
@@ -217,11 +231,10 @@ class Bot:
 
 		user = self.connected_users[context._user_id]
 
-		user.created_event = None
-		user.event_creation_data = {}
+		user.modified_event = None
 
-		await context.bot.answer_callback_query(update.callback_query.id, text = f"Вы отменили создание мероприятия")
-		await self.main_menu(update, context)
+		await context.bot.answer_callback_query(update.callback_query.id, text = f"Вы отменили редактирование мероприятия")
+		await self.main_menu(update, context, force_message = True)
 
 
 def main():
@@ -235,12 +248,14 @@ def main():
 
 	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
 	application.add_handler(CallbackQueryHandler(bot.main_menu, pattern='main_menu'))
-	application.add_handler(CallbackQueryHandler(bot.create_event, pattern='create_event'))
 	application.add_handler(CallbackQueryHandler(bot.get_events, pattern='get_events'))
 	application.add_handler(CallbackQueryHandler(bot.print_event, pattern='print_event'))
 	application.add_handler(CallbackQueryHandler(bot.show_events_on_day, pattern='show_events_on_day'))
-	application.add_handler(CallbackQueryHandler(bot.confirm_event_creation, pattern='confirm_event_creation'))
-	application.add_handler(CallbackQueryHandler(bot.decline_event_creation, pattern='decline_event_creation'))
+	application.add_handler(CallbackQueryHandler(bot.save_modified_event, pattern='save_modified_event'))
+	application.add_handler(CallbackQueryHandler(bot.decline_modified_event, pattern='decline_modified_event'))
+	application.add_handler(CallbackQueryHandler(bot.event_modification, pattern='event_modification'))
+	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
+
 
 	print(f'{clr.cyan}Bot is online')
 

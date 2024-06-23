@@ -9,27 +9,28 @@ from constants import EVENTS_DIR, IMAGES_DIR, EVENTS_FNAME#, TOTAL_DAYS_WITH_EVE
 
 
 class Event:
-	def __init__(self, name:str, date:datetime, description:str, picture_file_id:str = None):
+	def __init__(self, name:str = 'None', date:datetime = datetime.now(), 
+						description:str = 'None', picture_file_id:str = None):
 		self.name = name
-		self.date = date
+		self.datetime = date
 		self.picture_file_id = picture_file_id
 		self.description = description
 
 
 	def string_datetime(self) -> str:
-		return self.date.strftime('%d.%m %H:%M')
+		return self.datetime.strftime('%d.%m %H:%M')
 
 	def string_date(self) -> str:
-		return self.date.strftime('%d.%m')
+		return self.datetime.strftime('%d.%m')
 
 	def string_time(self) -> str:
-		return self.date.strftime('%H:%M')
+		return self.datetime.strftime('%H:%M')
 
 
-	async def print_event(self, update, context) -> str:
+	async def print_event(self, update, context, reply_markup = None) -> str:
 		# TODO
 
-		text = f"<b>{self.name}</b>\n\n{self.description}\n\n<b>{self.string_datetime()}</b>"
+		text = f"**{self.name}**\n\n{self.description}\n\n**{self.string_datetime()}**"
 
 		if self.picture_file_id is not None:
 			photo = await context.bot.getFile(self.picture_file_id)
@@ -38,9 +39,9 @@ class Event:
 			else:
 				photo = self.picture_file_id
 
-			await context.bot.send_photo(context._chat_id, caption = text, parse_mode="HTML", photo = photo)
+			await context.bot.send_photo(context._chat_id, caption = text, parse_mode="Markdown", photo = photo, reply_markup = reply_markup)
 		else:
-			await context.bot.send_message(context._chat_id, text = text, parse_mode="HTML")
+			await context.bot.send_message(context._chat_id, text = text, parse_mode="Markdown", reply_markup = reply_markup)
 
 
 async def save_event_picture(bot, picture) -> str:
@@ -49,6 +50,8 @@ async def save_event_picture(bot, picture) -> str:
 	# fname = hashlib.sha3_256(fname).hexdigest()
 
 	fname = picture.file_id
+	if fname in os.listdir(IMAGES_DIR):
+		return fname
 
 	file = await bot.getFile(picture)
 	file_path = os.path.join(IMAGES_DIR, fname)
