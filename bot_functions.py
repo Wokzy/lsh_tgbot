@@ -16,6 +16,7 @@ async def handle_event_modification_callback_query(bot, update, context) -> str:
 	if state == 'change_existing_event':
 		date, time = callback_query[1], callback_query[2]
 		user.modified_event = bot.current_events[date][time]
+		user.modified_event_old_position = (date, time)
 		answer_text = "Выберите нужный параметр для изменения:"
 	elif state == 'event_name':
 		if not update.message.text.isalnum():

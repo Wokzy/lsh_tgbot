@@ -47,6 +47,7 @@ class BotUser:
 		# FIXME
 		#self.event_creation_data = {}
 		self.modified_event = None
+		self.modified_event_old_position = None
 
 
 class Bot:
@@ -214,10 +215,13 @@ class Bot:
 		if user.modified_event.string_date() not in self.current_events:
 			self.current_events[user.modified_event.string_date()] = {}
 
+		if user.modified_event_old_position is not None:
+			del self.current_events[user.modified_event_old_position[0]][user.modified_event_old_position[1]]
+
 		self.current_events[user.modified_event.string_date()][user.modified_event.string_time()] = user.modified_event
 		events.save_events(self.current_events)
 
-		print(f"Event was saved by {context._user_id}, current amount: {len(self.current_events)}")
+		print(f"Event was saved by {context._user_id}")
 
 		await context.bot.answer_callback_query(update.callback_query.id, text = f"Мероприятие было успешно сохранено на {user.modified_event.string_datetime()}")
 		await self.main_menu(update, context, force_message = True)
