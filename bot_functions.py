@@ -1,6 +1,10 @@
 
+import os
 import utils
 import events
+import pickle
+
+from constants import USERS_FNAME
 
 async def handle_event_modification_callback_query(bot, update, context) -> str:
 	user = bot.connected_users[context._user_id]
@@ -41,4 +45,22 @@ async def handle_event_modification_callback_query(bot, update, context) -> str:
 		await context.bot.send_message(context._chat_id, text = answer_text)
 
 	return state
+
+
+def load_users() -> dict:
+	if USERS_FNAME not in os.listdir():
+		return {}
+
+	with open(USERS_FNAME, 'rb') as f:
+		data = pickle.load(f)
+		f.close()
+
+	return data
+
+
+def save_users(users:dict) -> None:
+	with open(USERS_FNAME, 'wb') as f:
+		pickle.dump(users, f)
+		f.close()
+
 

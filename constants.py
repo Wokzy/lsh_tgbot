@@ -1,12 +1,17 @@
 
+import datetime
+
 EVENTS_DIR = 'events/'
 IMAGES_DIR = 'images/'
 
 EVENTS_FNAME = 'events_data.bin'
+USERS_FNAME = 'users.bin'
 
 TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
 
 DATETIME_INPUT_FORMAT = "%H:%M %d.%m"
+
+DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0)
 
 class BUTTON_NAMINGS:
 	echo = "ECHO"
@@ -23,6 +28,8 @@ class BUTTON_NAMINGS:
 	remove_event = "Удалить мероприятие"
 	confirm_removal = "Подтвердить удаление"
 	decline_removal = "Не удалять"
+	user_settings = "Настройки"
+	user_authorization = "Пройти авторизацию"
 
 
 MISC_MESSAGES = {
@@ -30,5 +37,8 @@ MISC_MESSAGES = {
 	"event_dating" : f"Введите дату и время мероприятия в формате {DATETIME_INPUT_FORMAT}",
 	"event_picturing" : "Отправьте фото мероприятия",
 	"event_descriptioning" : "Отправьте описание мероприятия",
-	"removal_approvement": "Вы уверены в том, что хотите удалить данное мероприятие?"
+	"removal_approvement": "Вы уверены в том, что хотите удалить данное мероприятие?",
+	"user_authorization": "Введите информацию о себе в формате [класс] [Фамилия] [Имя] [код воспитателя (если вы воспет какого-то класса)]\n\nПример:\n9-2 Баульбек Баульбеков",
+	"technical_support": "Связаться с разработчиком @Wokzy1 можно непосредственно в телеграмм",
+	"wrong_auth_data":"Проверьте корректность введёных данных. Убедитесь, что это точно ваше имя, ваша фамилия и вы учитесь именно в этом классе",
 	}

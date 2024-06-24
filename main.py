@@ -1,8 +1,9 @@
 
 import events
+import datetime
 import bot_functions
 
-from constants import BUTTON_NAMINGS, MISC_MESSAGES
+from constants import BUTTON_NAMINGS, MISC_MESSAGES, DAILY_NEWSLETTER_TIME
 from utils import clr, read_config, read_date_from_message
 
 from telegram import (
@@ -32,17 +33,14 @@ __author__ = 'Yegor Yershov'
 
 
 class BotUser:
-	def __init__(self, is_root:bool = False):
+	def __init__(self, role:str = "user"):
 		"""
-		states:
-				waiting_for_password (root)
-				waiting_for_event_name
-				waiting_for_event_date
-				waiting_for_event_description (with picture)
+		roles: user, tutor, root
 		"""
 
-		self.is_root = is_root
+		self.role = role
 		self.current_state = None
+		self.authorization = None
 
 		# FIXME
 		#self.event_creation_data = {}
@@ -50,23 +48,77 @@ class BotUser:
 		self.modified_event_old_position = None
 
 
+		self.notifications_flag = False # Notificaitons toggle
+		self.notifications = [] # Events list to be notified about
+
+
+	async def print_authorization_data(self, update, context) -> None:
+		return
+
+
+	async def authorize(self, update, context) -> None:
+		self.current_state = None
+
+		data = update.message.text.split(' ')
+		if len(data) < 3:
+			context.bot.send_message(context._chat_id, text="Некорректный формат")
+			return
+
+		config = read_config()
+
+		auth_data = {
+					'grade':data[0],
+					'surname':data[1],
+					'name':data[2]}
+
+		if len(data) == 4:
+			password = data[3]
+			if password == config["ROOT_PASSWORD"]:
+				self.role = 'root'
+				await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как комсёнок")
+			elif password == config["TUTOR_PASSWORD"]:
+				self.role = 'tutor'
+				await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как воспитатель")
+		else:
+			if not bot_functions.match_auth_data(auth_data):
+				await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['wrong_auth_data'])
+				return
+
+		self.authorization = auth_data
+
+
+	async def setup_daily_newsletter(self, update, context, job_queue):
+		self.notifications_flag = True
+		job_queue.run_daily(self.daily_newsletter,
+							DAILY_NEWSLETTER_TIME,
+							chat_id=context._chat_id,
+							user_id=context._user_id,
+							name="Daily Newsletter")
+
+	async def daily_newsletter(self, context):
+		pass
+
+
 class Bot:
 	def __init__(self):
 		"""
-			self.connected_users = {user_id: {'is_root':bool, 'current_state':str}}
-			
+			pass
 		"""
-		self.connected_users = {}
+		self.connected_users = bot_functions.load_users()
 
 		self.current_events = events.load_events()
 
 
-	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE, job_queue) -> None:
 		user = update.message.from_user
 
 		if user.id not in self.connected_users:
 			print(f'{clr.yellow}{user.first_name} {user.last_name} {user.username} [{user.id}] Has just launched the bot')
 			self.connected_users[context._user_id] = BotUser()
+
+			self.connected_users[context._user_id].setup_daily_newsletter()
+
+
 
 		await self.main_menu(update, context)
 
@@ -82,6 +134,8 @@ class Bot:
 			user = self.connected_users[context._user_id]
 			if user.modified_event is not None:
 				await self.event_modification(update, context)
+			if user.current_state == 'authorization':
+				await user.authorize(update, context)
 
 		if answer_text is not None:
 			await context.bot.send_message(update.message.chat.id, text = answer_text)
@@ -102,8 +156,11 @@ class Bot:
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')], 
 					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')]]
 
-		if self.connected_users[context._user_id].is_root or True: # TDDO
+		if self.connected_users[context._user_id].role == 'root': # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
+		if self.connected_users[context._user_id].authorization is None:
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
+							callback_data='_change_user_state authorization user_authorization')])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
@@ -147,7 +204,7 @@ class Bot:
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message'),
 					]]
 
-		if self.connected_users[context._user_id].is_root or True:
+		if self.connected_users[context._user_id].role == 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
 					 				callback_data=f'event_modification change_existing_event {day} {time}'),
 							InlineKeyboardButton(BUTTON_NAMINGS.remove_event, 
@@ -268,13 +325,37 @@ class Bot:
 		await self.main_menu(update, context, force_message = True)
 
 
+	async def user_settings(self, update, context):
+
+		user = self.connected_users[context._user_id]
+		status = update.callback_query.data.split(' ')[1]
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
+							callback_data='_change_user_state authorization user_authorization')],
+					 [InlineKeyboardButton(BUTTON_NAMINGS.technical_support, callback_data='user_settings technical_support')],
+		]
+
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if status == technical_support:
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['technical_support'])
+
+		if user.authorization is not None:
+			await user.print_authorization_data(update, context, reply_markup=keyboard)
+		else:
+			await context.bot.send_message(context._chat_id, text="Выберите нужный пункт для настройки", reply_markup=keyboard)
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+
+
 def main():
 	print(f'{clr.green}Starting bot...')
 	config = read_config()
 	bot = Bot()
 
 	application = Application.builder().token(config['BOT_TOKEN']).build()
-	application.add_handler(CommandHandler("start", bot.start_session))
+	application.add_handler(CommandHandler("start", bot.start_session, pass_job_queue=True))
 	application.add_handler(MessageHandler(filters.ALL, bot.handle_message))
 
 	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
@@ -287,11 +368,13 @@ def main():
 	application.add_handler(CallbackQueryHandler(bot.event_modification, pattern='event_modification'))
 	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 	application.add_handler(CallbackQueryHandler(bot.remove_event, pattern='remove_event'))
+	application.add_handler(CallbackQueryHandler(bot.user_settings, pattern='user_settings'))
 
 
 	print(f'{clr.cyan}Bot is online')
 
 	application.run_polling()
+	bot_functions.save_users(bot.connected_users)
 
 
 if __name__ == '__main__':
