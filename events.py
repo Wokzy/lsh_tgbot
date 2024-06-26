@@ -17,6 +17,8 @@ class Event:
 		self.picture_file_id = picture_file_id
 		self.description = description
 
+		# self.event_id = random.randint(1, 1<<64)
+
 
 	def string_datetime(self) -> str:
 		return self.datetime.strftime('%d.%m %H:%M')

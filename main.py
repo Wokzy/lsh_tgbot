@@ -7,7 +7,8 @@ from constants import (
 	BUTTON_NAMINGS,
 	MISC_MESSAGES,
 	DAILY_NEWSLETTER_TIME,
-	ROLE_MAPPING
+	ROLE_MAPPING,
+	TIMEZONE,
 )
 
 from utils import (
@@ -67,6 +68,7 @@ class BotUser:
 
 
 		self.notifications_flag = False # Notificaitons toggle
+		self.notify_events = set()
 
 
 	async def print_authorization_data(self, update, context) -> None:
@@ -122,6 +124,10 @@ class BotUser:
 		print(context.job_queue.jobs())
 
 
+	async def notify(self, context) -> None:
+		print('Notification mock')
+
+
 class Bot:
 	def __init__(self):
 		"""
@@ -131,6 +137,8 @@ class Bot:
 		self.static_data = bot_functions.load_static_data()
 		self.connected_users = self.static_data.get('connected_users', {})
 		self.current_events = events.load_events()
+
+		self.__refreshed = False
 
 
 	def save_all_data(self) -> None:
@@ -149,14 +157,17 @@ class Bot:
 
 	async def refresh(self, update, context) -> None:
 		""" root command to refresh all data (usually used after reboot) """
-		if context._user_id not in CONFIG['ROOT_USERS']:
+		if self.__refreshed or context._user_id not in CONFIG['ROOT_USERS']:
 			return
 
 		print(f'{clr.yellow}', end='')
 		for user_id, user in self.connected_users.items():
 			if user.notifications_flag:
 				user.setup_daily_newsletter(context, self.daily_newsletter)
+				for event in user.notify_events:
+					await self.setup_notification(update, context, user=user, event=event)
 
+		self.__refreshed = True
 		print(f'{clr.yellow}Refreshed')
 
 
@@ -180,6 +191,10 @@ class Bot:
 		""" Newsletter """
 
 		message = self.static_data.get('newsletter', {'text':'No newsletter', 'photo':None})
+
+		if reply_markup is None:
+			reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')]])
+
 
 		if message['photo'] is None:
 			await context.bot.send_message(context._chat_id,
@@ -208,7 +223,7 @@ class Bot:
 				await user.authorize(update, context)
 				await self.main_menu(update, context, force_message = True)
 				return
-			elif user.current_state == 'edit_newsletter':
+			if user.current_state == 'edit_newsletter':
 				await self.edit_newsletter(update, context)
 			elif user.current_state == 'edit_canteen_menu':
 				await self.canteen_menu(update, context)
@@ -277,8 +292,18 @@ class Bot:
 				keyboard.append([InlineKeyboardButton(key, callback_data = f'get_events {day} {key}')])
 		else:
 			day, time = callback_data
+			user, event = self.connected_users[context._user_id], self.current_events[day][time]
 			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message')]]
-			if self.connected_users[context._user_id].role == 'root':
+
+			if user.notifications_flag:
+				if event not in user.notify_events:
+					keyboard[0].append(InlineKeyboardButton(BUTTON_NAMINGS.notify,
+						callback_data=f'setup_notification enable {day} {time}'))
+				else:
+					keyboard[0].append(InlineKeyboardButton(BUTTON_NAMINGS.disnotify,
+						callback_data=f'setup_notification disable {day} {time}'))
+
+			if user.role == 'root':
 				keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
 						 				callback_data=f'event_modification change_existing_event {day} {time}'),
 								InlineKeyboardButton(BUTTON_NAMINGS.remove_event, 
@@ -428,7 +453,7 @@ class Bot:
 	async def edit_newsletter(self, update, context) -> None:
 
 
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message')]]
 		keyboard = InlineKeyboardMarkup(keyboard)
 
 		if update.callback_query is not None:
@@ -480,6 +505,45 @@ class Bot:
 		await context.bot.answer_callback_query(update.callback_query.id)
 
 
+	async def setup_notification(self, update, context, user, event=None) -> None:
+
+		if event is None:
+			state, day, time = update.callback_query.data.split(' ')[1::]
+			user = self.connected_users[context._user_id]
+			event = self.current_events[day][time]
+		else:
+			state = 'enable'
+
+		if state == 'enable':
+			when = datetime.datetime(
+				year=event.datetime.year,
+				month=event.datetime.month,
+				day=event.datetime.day,
+				hour=event.datetime.hour - 1,
+				minute=event.datetime.minute,
+				tzinfo=TIMEZONE)
+
+			context.job_queue.run_once(
+					user.notify,
+					data=event,
+					user_id=context._user_id,
+					chat_id=context._chat_id,
+					name=f'{event.name}_{user.user_id}',
+					when=when)
+
+			user.notify_events.add(event)
+
+			if update.callback_query is not None:
+				await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание установлено')
+		elif state == 'disable':
+
+
+			await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание отключено')
+
+		await self.main_menu(update, context, force_message=True)
+
+
+
 
 
 def main():
@@ -503,6 +567,7 @@ def main():
 	application.add_handler(CallbackQueryHandler(bot.user_settings, pattern='user_settings'))
 	application.add_handler(CallbackQueryHandler(bot.edit_newsletter, pattern='edit_newsletter'))
 	application.add_handler(CallbackQueryHandler(bot.canteen_menu, pattern='canteen_menu'))
+	application.add_handler(CallbackQueryHandler(bot.setup_notification, pattern='setup_notification'))
 
 	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 

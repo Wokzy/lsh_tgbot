@@ -11,6 +11,7 @@ STATIC_DATA_FNAME = 'static_data.bin'
 
 TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
 
+TIMEZONE = pytz.timezone('Asia/Novosibirsk')
 DATETIME_INPUT_FORMAT = "%H:%M %d.%m"
 
 DEBUG_MODE = '--debug' in sys.argv
@@ -21,9 +22,9 @@ if DEBUG_MODE:
 										_debug_time.minute + (_debug_time.second + 10 >= 60),
 										(_debug_time.second + 10) % 60, 
 										0,
-										tzinfo=pytz.timezone('Asia/Novosibirsk'))
+										tzinfo=TIMEZONE)
 else:
-	DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0, tzinfo=pytz.timezone('Asia/Novosibirsk'))
+	DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0, tzinfo=TIMEZONE)
 
 
 class BUTTON_NAMINGS:
@@ -46,6 +47,8 @@ class BUTTON_NAMINGS:
 	technical_support        = "Техническая поддержка"
 	edit_newsletter          = "Дневная рассылка"
 	canteen_menu             = "Меню"
+	notify                   = "Напомнить"
+	disnotify                = "Не напоминать"
 
 
 MISC_MESSAGES = {
