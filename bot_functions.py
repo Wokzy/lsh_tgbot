@@ -4,7 +4,7 @@ import utils
 import events
 import pickle
 
-from constants import USERS_FNAME
+from constants import STATIC_DATA_FNAME
 
 async def handle_event_modification_callback_query(bot, update, context) -> str:
 	user = bot.connected_users[context._user_id]
@@ -47,20 +47,23 @@ async def handle_event_modification_callback_query(bot, update, context) -> str:
 	return state
 
 
-def load_users() -> dict:
-	if USERS_FNAME not in os.listdir():
+def load_static_data() -> dict:
+	if STATIC_DATA_FNAME not in os.listdir():
 		return {}
 
-	with open(USERS_FNAME, 'rb') as f:
+	with open(STATIC_DATA_FNAME, 'rb') as f:
 		data = pickle.load(f)
-		f.close()
 
 	return data
 
 
-def save_users(users:dict) -> None:
-	with open(USERS_FNAME, 'wb') as f:
-		pickle.dump(users, f)
-		f.close()
+def save_static_data(data:dict) -> None:
+	with open(STATIC_DATA_FNAME, 'wb') as f:
+		pickle.dump(data, f)
+
+
+def match_auth_data(data:dict) -> bool:
+	""" TODO """
+	return True
 
 

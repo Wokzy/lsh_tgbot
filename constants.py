@@ -5,7 +5,7 @@ EVENTS_DIR = 'events/'
 IMAGES_DIR = 'images/'
 
 EVENTS_FNAME = 'events_data.bin'
-USERS_FNAME = 'users.bin'
+STATIC_DATA_FNAME = 'static_data.bin'
 
 TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
 
@@ -41,4 +41,10 @@ MISC_MESSAGES = {
 	"user_authorization": "Введите информацию о себе в формате [класс] [Фамилия] [Имя] [код воспитателя (если вы воспет какого-то класса)]\n\nПример:\n9-2 Баульбек Баульбеков",
 	"technical_support": "Связаться с разработчиком @Wokzy1 можно непосредственно в телеграмм",
 	"wrong_auth_data":"Проверьте корректность введёных данных. Убедитесь, что это точно ваше имя, ваша фамилия и вы учитесь именно в этом классе",
-	}
+}
+
+ROLE_MAPPING = {
+	"user":"Ученик Летней школы",
+	"tutor":"Воспитатель",
+	"root":"Комсёнок",
+}

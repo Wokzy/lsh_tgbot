@@ -3,7 +3,8 @@ import events
 import datetime
 import bot_functions
 
-from constants import BUTTON_NAMINGS, MISC_MESSAGES, DAILY_NEWSLETTER_TIME
+from constants import BUTTON_NAMINGS, MISC_MESSAGES, \
+					  DAILY_NEWSLETTER_TIME, ROLE_MAPPING
 from utils import clr, read_config, read_date_from_message
 
 from telegram import (
@@ -31,6 +32,8 @@ from telegram.ext import (
 
 __author__ = 'Yegor Yershov'
 
+CONFIG = read_config()
+
 
 class BotUser:
 	def __init__(self, role:str = "user"):
@@ -53,18 +56,29 @@ class BotUser:
 
 
 	async def print_authorization_data(self, update, context) -> None:
-		return
+
+		if self.authorization is not None:
+			text = 'Информация о вас:\n\n' + \
+				  f'Роль: {ROLE_MAPPING[self.role]}\n' + \
+				  f'Класс: {self.authorization["grade"]}\n' + \
+				  f'Имя Фамилия: {self.authorization["name"]} {self.authorization['surname']}'
+
+		await context.bot.send_message(context._chat_id, text=text)
 
 
 	async def authorize(self, update, context) -> None:
 		self.current_state = None
 
 		data = update.message.text.split(' ')
-		if len(data) < 3:
-			context.bot.send_message(context._chat_id, text="Некорректный формат")
+
+		if CONFIG["ROOT_PASSWORD"] in data:# or context._user_id in CONFIG['ROOT_USERS']:
+			self.role = 'root'
+			await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как комсёнок")
 			return
 
-		config = read_config()
+		if len(data) < 3:
+			await context.bot.send_message(context._chat_id, text="Некорректный формат")
+			return
 
 		auth_data = {
 					'grade':data[0],
@@ -72,31 +86,24 @@ class BotUser:
 					'name':data[2]}
 
 		if len(data) == 4:
-			password = data[3]
-			if password == config["ROOT_PASSWORD"]:
-				self.role = 'root'
-				await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как комсёнок")
-			elif password == config["TUTOR_PASSWORD"]:
+			if password == data[3]["TUTOR_PASSWORD"]:
 				self.role = 'tutor'
 				await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как воспитатель")
-		else:
-			if not bot_functions.match_auth_data(auth_data):
-				await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['wrong_auth_data'])
-				return
+		elif not bot_functions.match_auth_data(auth_data):
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['wrong_auth_data'])
+			return
 
 		self.authorization = auth_data
+		await self.print_authorization_data(update, context)
 
 
-	async def setup_daily_newsletter(self, update, context, job_queue):
+	async def setup_daily_newsletter(self, update, context, job_queue, daily_newsletter):
 		self.notifications_flag = True
-		job_queue.run_daily(self.daily_newsletter,
+		job_queue.run_daily(daily_newsletter,
 							DAILY_NEWSLETTER_TIME,
 							chat_id=context._chat_id,
 							user_id=context._user_id,
 							name="Daily Newsletter")
-
-	async def daily_newsletter(self, context):
-		pass
 
 
 class Bot:
@@ -104,25 +111,40 @@ class Bot:
 		"""
 			pass
 		"""
-		self.connected_users = bot_functions.load_users()
 
+		self.static_data = bot_functions.load_static_data()
+		self.connected_users = self.static_data.get('connected_users', {})
 		self.current_events = events.load_events()
 
 
-	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE, job_queue) -> None:
+	def save_all_data(self) -> None:
+		self.static_data['connected_users'] = self.connected_users
+
+		events.save_events(self.current_events)
+		bot_functions.save_static_data(self.static_data)
+
+
+	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 		user = update.message.from_user
 
 		if user.id not in self.connected_users:
 			print(f'{clr.yellow}{user.first_name} {user.last_name} {user.username} [{user.id}] Has just launched the bot')
 			self.connected_users[context._user_id] = BotUser()
 
-			self.connected_users[context._user_id].setup_daily_newsletter()
+			# await self.connected_users[context._user_id].setup_daily_newsletter(update,
+			# 																	context,
+			# 																	job_queue,
+			# 																	self.daily_newsletter)
 
 
 
 		await self.main_menu(update, context)
 
 		# await context.bot.send_message(update.message.chat.id, "You've already started me")
+
+
+	async def daily_newsletter(self, context) -> None:
+		""" Newsletter """
 
 
 	async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -136,6 +158,8 @@ class Bot:
 				await self.event_modification(update, context)
 			if user.current_state == 'authorization':
 				await user.authorize(update, context)
+				await self.main_menu(update, context, force_message = True)
+				return
 
 		if answer_text is not None:
 			await context.bot.send_message(update.message.chat.id, text = answer_text)
@@ -165,6 +189,9 @@ class Bot:
 		keyboard = InlineKeyboardMarkup(keyboard)
 
 		response_text = 'Welcome!'
+
+		if update.callback_query is not None:
+			force_message = force_message or 'force_message' in update.callback_query.data
 
 		if update.callback_query and not force_message:# and update.callback_query.data == 'main_menu':
 			await update.callback_query.edit_message_text(text = response_text, reply_markup = keyboard)
@@ -355,7 +382,7 @@ def main():
 	bot = Bot()
 
 	application = Application.builder().token(config['BOT_TOKEN']).build()
-	application.add_handler(CommandHandler("start", bot.start_session, pass_job_queue=True))
+	application.add_handler(CommandHandler("start", bot.start_session))
 	application.add_handler(MessageHandler(filters.ALL, bot.handle_message))
 
 	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
@@ -374,7 +401,7 @@ def main():
 	print(f'{clr.cyan}Bot is online')
 
 	application.run_polling()
-	bot_functions.save_users(bot.connected_users)
+	#bot.save_all_data()
 
 
 if __name__ == '__main__':
