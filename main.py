@@ -48,10 +48,13 @@ CONFIG = read_config()
 
 
 class BotUser:
-	def __init__(self, role:str = "user"):
+	def __init__(self, role:str = "user", user_id = None, chat_id = None):
 		"""
 		roles: user, tutor, root
 		"""
+
+		self.user_id = user_id
+		self.chat_id = chat_id
 
 		self.role = role
 		self.current_state = None
@@ -108,12 +111,12 @@ class BotUser:
 		await self.print_authorization_data(update, context)
 
 
-	def setup_daily_newsletter(self, update, context, daily_newsletter):
+	def setup_daily_newsletter(self, context, daily_newsletter):
 		self.notifications_flag = True
 		context.job_queue.run_daily(daily_newsletter,
 							DAILY_NEWSLETTER_TIME,
-							chat_id=context._chat_id,
-							user_id=context._user_id,
+							chat_id=self.chat_id,
+							user_id=self.user_id,
 							name="Daily Newsletter")
 
 		print(context.job_queue.jobs())
@@ -135,14 +138,20 @@ class Bot:
 
 		events.save_events(self.current_events)
 		bot_functions.save_static_data(self.static_data)
-		print('saved')
+		print(f'{clr.green}saved{clr.yellow}')
+
 
 	async def refresh(self, update, context) -> None:
 		""" root command to refresh all data (usually used after reboot) """
 		if context._user_id not in CONFIG['ROOT_USERS']:
 			return
 
-		pass
+		print(f'{clr.yellow}', end='')
+		for user_id, user in self.connected_users.items():
+			if user.notifications_flag:
+				user.setup_daily_newsletter(context, self.daily_newsletter)
+
+		print(f'{clr.yellow}Refreshed')
 
 
 	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -150,11 +159,9 @@ class Bot:
 
 		if user.id not in self.connected_users:
 			print(f'{clr.yellow}{user.first_name} {user.last_name} {user.username} [{user.id}] Has just launched the bot')
-			self.connected_users[context._user_id] = BotUser()
+			self.connected_users[context._user_id] = BotUser(user_id=context._user_id, chat_id=context._chat_id)
 
-			self.connected_users[context._user_id].setup_daily_newsletter(update,
-																				context,
-																				self.daily_newsletter)
+			self.connected_users[context._user_id].setup_daily_newsletter(context, self.daily_newsletter)
 
 
 
@@ -230,10 +237,8 @@ class Bot:
 
 		response_text = 'Welcome!'
 
-		force_message = not bool(update.message)
-
-		#if update.callback_query is not None:
-		#	force_message = force_message or 'force_message' in update.callback_query.data
+		if update.callback_query is not None:
+			force_message = force_message or 'force_message' in update.callback_query.data
 
 		if update.callback_query and not force_message:# and update.callback_query.data == 'main_menu':
 			await update.callback_query.edit_message_text(text = response_text, reply_markup = keyboard)
@@ -263,6 +268,7 @@ class Bot:
 				keyboard.append([InlineKeyboardButton(key, callback_data = f'get_events {day} {key}')])
 		else:
 			day, time = callback_data
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message')]]
 			if self.connected_users[context._user_id].role == 'root':
 				keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
 						 				callback_data=f'event_modification change_existing_event {day} {time}'),
@@ -348,7 +354,7 @@ class Bot:
 			await context.bot.answer_callback_query(update.callback_query.id)
 
 
-	async def save_modified_event(self, update, context):
+	async def save_modified_event(self, update, context) -> None:
 
 		if context._user_id not in self.connected_users.keys():
 			await context.bot.answer_callback_query(update.callback_query.id)
@@ -374,7 +380,7 @@ class Bot:
 		await self.main_menu(update, context, force_message = True)
 
 
-	async def decline_modified_event(self, update, context):
+	async def decline_modified_event(self, update, context) -> None:
 
 		if context._user_id not in self.connected_users.keys():
 			await context.bot.answer_callback_query(update.callback_query.id)
@@ -386,7 +392,7 @@ class Bot:
 		await self.main_menu(update, context, force_message = True)
 
 
-	async def user_settings(self, update, context):
+	async def user_settings(self, update, context) -> None:
 
 		user = self.connected_users[context._user_id]
 		status = update.callback_query.data.split(' ')[1]
@@ -410,7 +416,7 @@ class Bot:
 		await context.bot.answer_callback_query(update.callback_query.id)
 
 
-	async def edit_newsletter(self, update, context):
+	async def edit_newsletter(self, update, context) -> None:
 
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
