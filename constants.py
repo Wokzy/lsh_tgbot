@@ -1,4 +1,6 @@
 
+import sys
+import pytz
 import datetime
 
 EVENTS_DIR = 'events/'
@@ -11,25 +13,37 @@ TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
 
 DATETIME_INPUT_FORMAT = "%H:%M %d.%m"
 
-DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0)
+DEBUG_MODE = '--debug' in sys.argv
+
+if DEBUG_MODE:
+	_debug_time = datetime.datetime.now()
+	DAILY_NEWSLETTER_TIME = datetime.time(_debug_time.hour,
+										_debug_time.minute + (_debug_time.second + 10 >= 60),
+										(_debug_time.second + 10) % 60, 
+										0,
+										tzinfo=pytz.timezone('Asia/Novosibirsk'))
+else:
+	DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0, tzinfo=pytz.timezone('Asia/Novosibirsk'))
+
 
 class BUTTON_NAMINGS:
-	echo = "ECHO"
-	create_event = "Создать мероприятие"
-	get_events = "Список мероприятий"
-	main_menu = "Главное меню"
-	save_modified_event = "Сохранить мероприятие"
-	decline_modified_event = "Вернуться в главное меню без сохраниения"
-	change_event_name = "Изменить название"
-	change_event_date = "Изменить дату и время"
+	echo                     = "ECHO"
+	create_event             = "Создать мероприятие"
+	get_events               = "Список мероприятий"
+	main_menu                = "Главное меню"
+	save_modified_event      = "Сохранить мероприятие"
+	decline_modified_event   = "Вернуться в главное меню без сохраниения"
+	change_event_name        = "Изменить название"
+	change_event_date        = "Изменить дату и время"
 	change_event_description = "Изменить описание"
-	change_event_picture = "Изменить картинку"
-	modify_event = "Редактировать мероприятие"
-	remove_event = "Удалить мероприятие"
-	confirm_removal = "Подтвердить удаление"
-	decline_removal = "Не удалять"
-	user_settings = "Настройки"
-	user_authorization = "Пройти авторизацию"
+	change_event_picture     = "Изменить картинку"
+	modify_event             = "Редактировать мероприятие"
+	remove_event             = "Удалить мероприятие"
+	confirm_removal          = "Подтвердить удаление"
+	decline_removal          = "Не удалять"
+	user_settings            = "Настройки"
+	user_authorization       = "Пройти авторизацию"
+	technical_support        = "Техническая поддержка"
 
 
 MISC_MESSAGES = {

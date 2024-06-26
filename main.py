@@ -3,9 +3,18 @@ import events
 import datetime
 import bot_functions
 
-from constants import BUTTON_NAMINGS, MISC_MESSAGES, \
-					  DAILY_NEWSLETTER_TIME, ROLE_MAPPING
-from utils import clr, read_config, read_date_from_message
+from constants import (
+	BUTTON_NAMINGS,
+	MISC_MESSAGES,
+	DAILY_NEWSLETTER_TIME,
+	ROLE_MAPPING
+)
+
+from utils import (
+	clr,
+	read_config,
+	read_date_from_message
+)
 
 from telegram import (
 	KeyboardButton,
@@ -24,6 +33,7 @@ from telegram.ext import (
 	ContextTypes,
 	MessageHandler,
 	CallbackQueryHandler,
+	JobQueue,
 	#PollAnswerHandler,
 	#PollHandler,
 	filters,
@@ -52,7 +62,6 @@ class BotUser:
 
 
 		self.notifications_flag = False # Notificaitons toggle
-		self.notifications = [] # Events list to be notified about
 
 
 	async def print_authorization_data(self, update, context) -> None:
@@ -61,7 +70,7 @@ class BotUser:
 			text = 'Информация о вас:\n\n' + \
 				  f'Роль: {ROLE_MAPPING[self.role]}\n' + \
 				  f'Класс: {self.authorization["grade"]}\n' + \
-				  f'Имя Фамилия: {self.authorization["name"]} {self.authorization['surname']}'
+				  f'Имя Фамилия: {self.authorization["name"]} {self.authorization["surname"]}'
 
 		await context.bot.send_message(context._chat_id, text=text)
 
@@ -71,7 +80,7 @@ class BotUser:
 
 		data = update.message.text.split(' ')
 
-		if CONFIG["ROOT_PASSWORD"] in data:# or context._user_id in CONFIG['ROOT_USERS']:
+		if CONFIG["ROOT_PASSWORD"] in data or context._user_id in CONFIG['ROOT_USERS']:
 			self.role = 'root'
 			await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как комсёнок")
 			return
@@ -86,7 +95,7 @@ class BotUser:
 					'name':data[2]}
 
 		if len(data) == 4:
-			if password == data[3]["TUTOR_PASSWORD"]:
+			if data[3] == CONFIG["TUTOR_PASSWORD"]:
 				self.role = 'tutor'
 				await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как воспитатель")
 		elif not bot_functions.match_auth_data(auth_data):
@@ -97,13 +106,15 @@ class BotUser:
 		await self.print_authorization_data(update, context)
 
 
-	async def setup_daily_newsletter(self, update, context, job_queue, daily_newsletter):
+	def setup_daily_newsletter(self, update, context, daily_newsletter):
 		self.notifications_flag = True
-		job_queue.run_daily(daily_newsletter,
+		context.job_queue.run_daily(daily_newsletter,
 							DAILY_NEWSLETTER_TIME,
 							chat_id=context._chat_id,
 							user_id=context._user_id,
 							name="Daily Newsletter")
+
+		print(context.job_queue.jobs())
 
 
 class Bot:
@@ -131,10 +142,9 @@ class Bot:
 			print(f'{clr.yellow}{user.first_name} {user.last_name} {user.username} [{user.id}] Has just launched the bot')
 			self.connected_users[context._user_id] = BotUser()
 
-			# await self.connected_users[context._user_id].setup_daily_newsletter(update,
-			# 																	context,
-			# 																	job_queue,
-			# 																	self.daily_newsletter)
+			self.connected_users[context._user_id].setup_daily_newsletter(update,
+																				context,
+																				self.daily_newsletter)
 
 
 
@@ -145,6 +155,8 @@ class Bot:
 
 	async def daily_newsletter(self, context) -> None:
 		""" Newsletter """
+		print('sending newsletter')
+		return
 
 
 	async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -171,6 +183,7 @@ class Bot:
 		await context.bot.send_message(context._chat_id, text = "echo")
 		# await self.main_menu(update, context)
 		await context.bot.answer_callback_query(update.callback_query.id)
+		print(context.job_queue.jobs())
 
 
 	async def main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, force_message = False) -> None:
@@ -178,11 +191,12 @@ class Bot:
 		self.connected_users[context._user_id].modified_event = None
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')], 
-					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')]]
+					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.user_settings, callback_data = 'user_settings default')]]
 
 		if self.connected_users[context._user_id].role == 'root': # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
-		if self.connected_users[context._user_id].authorization is None:
+		if self.connected_users[context._user_id].authorization is None and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
 
@@ -365,7 +379,7 @@ class Bot:
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
-		if status == technical_support:
+		if status == "technical_support":
 			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['technical_support'])
 
 		if user.authorization is not None:
@@ -381,7 +395,7 @@ def main():
 	config = read_config()
 	bot = Bot()
 
-	application = Application.builder().token(config['BOT_TOKEN']).build()
+	application = Application.builder().token(config['BOT_TOKEN']).read_timeout(7).get_updates_read_timeout(42).build()
 	application.add_handler(CommandHandler("start", bot.start_session))
 	application.add_handler(MessageHandler(filters.ALL, bot.handle_message))
 
