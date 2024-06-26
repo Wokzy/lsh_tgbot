@@ -125,7 +125,7 @@ class BotUser:
 class Bot:
 	def __init__(self):
 		"""
-			pass
+			Load user's and event's info
 		"""
 
 		self.static_data = bot_functions.load_static_data()
@@ -139,6 +139,12 @@ class Bot:
 		events.save_events(self.current_events)
 		bot_functions.save_static_data(self.static_data)
 		print(f'{clr.green}saved{clr.yellow}')
+
+
+	async def async_save(self, update, context):
+		if self.connected_users[context._user_id].role != 'root':
+			return
+		self.save_all_data()
 
 
 	async def refresh(self, update, context) -> None:
@@ -204,6 +210,8 @@ class Bot:
 				return
 			elif user.current_state == 'edit_newsletter':
 				await self.edit_newsletter(update, context)
+			elif user.current_state == 'edit_canteen_menu':
+				await self.canteen_menu(update, context)
 
 		if answer_text is not None:
 			await context.bot.send_message(update.message.chat.id, text = answer_text)
@@ -224,6 +232,7 @@ class Bot:
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')], 
 					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.user_settings, callback_data = 'user_settings default')]]
 
 		if self.connected_users[context._user_id].role == 'root': # TDDO
@@ -438,6 +447,41 @@ class Bot:
 			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['newsletter_changed'], reply_markup=keyboard)
 
 
+	async def canteen_menu(self, update, context) -> None:
+		""" Print out canteen menu (supposed to be only text) """
+
+		menu = self.static_data.get('canteen_menu', "Menu:")
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if update.callback_query is None:
+			self.connected_users[context._user_id].current_state = None
+
+			if update.message.text is not None:
+				self.static_data['canteen_menu'] = update.message.text
+				await context.bot.send_message(context._chat_id,
+											   text=MISC_MESSAGES['canteen_menu_chaged'],
+											   reply_markup=keyboard)
+
+			return
+
+
+
+		if self.connected_users[context._user_id].role == 'root':
+			await context.bot.send_message(context._chat_id, text=menu)
+			self.connected_users[context._user_id].current_state = "edit_canteen_menu"
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['edit_canteen_menu'],
+										   reply_markup=keyboard)
+		else:
+			await context.bot.send_message(context._chat_id, text=menu, reply_markup=keyboard)
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+
+
+
+
 def main():
 	print(f'{clr.green}Starting bot...')
 	config = read_config()
@@ -446,6 +490,7 @@ def main():
 	application = Application.builder().token(config['BOT_TOKEN']).read_timeout(7).get_updates_read_timeout(42).build()
 	application.add_handler(CommandHandler("start", bot.start_session))
 	application.add_handler(CommandHandler("refresh", bot.refresh))
+	application.add_handler(CommandHandler("save_all", bot.async_save))
 	application.add_handler(MessageHandler(filters.ALL, bot.handle_message))
 
 	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
@@ -457,6 +502,7 @@ def main():
 	application.add_handler(CallbackQueryHandler(bot.remove_event, pattern='remove_event'))
 	application.add_handler(CallbackQueryHandler(bot.user_settings, pattern='user_settings'))
 	application.add_handler(CallbackQueryHandler(bot.edit_newsletter, pattern='edit_newsletter'))
+	application.add_handler(CallbackQueryHandler(bot.canteen_menu, pattern='canteen_menu'))
 
 	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 
