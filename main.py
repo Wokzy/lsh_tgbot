@@ -13,6 +13,8 @@ from constants import (
 from utils import (
 	clr,
 	read_config,
+	save_photo,
+	load_photo,
 	read_date_from_message
 )
 
@@ -133,6 +135,14 @@ class Bot:
 
 		events.save_events(self.current_events)
 		bot_functions.save_static_data(self.static_data)
+		print('saved')
+
+	async def refresh(self, update, context) -> None:
+		""" root command to refresh all data (usually used after reboot) """
+		if context._user_id not in CONFIG['ROOT_USERS']:
+			return
+
+		pass
 
 
 	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -153,10 +163,23 @@ class Bot:
 		# await context.bot.send_message(update.message.chat.id, "You've already started me")
 
 
-	async def daily_newsletter(self, context) -> None:
+	async def daily_newsletter(self, context, reply_markup=None) -> None:
 		""" Newsletter """
-		print('sending newsletter')
-		return
+
+		message = self.static_data.get('newsletter', {'text':'No newsletter', 'photo':None})
+
+		if message['photo'] is None:
+			await context.bot.send_message(context._chat_id,
+										   text=message['text'],
+										   parse_mode="Markdown",
+										   reply_markup=reply_markup)
+		else:
+			message['photo'] = await load_photo(context, message['photo'])
+			await context.bot.send_photo(context._chat_id,
+										 caption=message['text'],
+										 photo=message['photo'],
+										 parse_mode="Markdown",
+										 reply_markup=reply_markup)
 
 
 	async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -172,6 +195,8 @@ class Bot:
 				await user.authorize(update, context)
 				await self.main_menu(update, context, force_message = True)
 				return
+			elif user.current_state == 'edit_newsletter':
+				await self.edit_newsletter(update, context)
 
 		if answer_text is not None:
 			await context.bot.send_message(update.message.chat.id, text = answer_text)
@@ -196,6 +221,7 @@ class Bot:
 
 		if self.connected_users[context._user_id].role == 'root': # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.edit_newsletter, callback_data = 'edit_newsletter default')])
 		if self.connected_users[context._user_id].authorization is None and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
@@ -204,8 +230,10 @@ class Bot:
 
 		response_text = 'Welcome!'
 
-		if update.callback_query is not None:
-			force_message = force_message or 'force_message' in update.callback_query.data
+		force_message = not bool(update.message)
+
+		#if update.callback_query is not None:
+		#	force_message = force_message or 'force_message' in update.callback_query.data
 
 		if update.callback_query and not force_message:# and update.callback_query.data == 'main_menu':
 			await update.callback_query.edit_message_text(text = response_text, reply_markup = keyboard)
@@ -217,47 +245,39 @@ class Bot:
 
 
 	async def get_events(self, update, context) -> None:
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-		for key in sorted(self.current_events.keys()):
-			keyboard.append([InlineKeyboardButton(key, callback_data = f'show_events_on_day {key}')])
 
-		keyboard = InlineKeyboardMarkup(keyboard)
+		callback_data = update.callback_query.data.split(' ')[1::]
 
-		await update.callback_query.edit_message_text(text = 'Выберите день:', reply_markup = keyboard)
-		await context.bot.answer_callback_query(update.callback_query.id)
-
-
-	async def show_events_on_day(self, update, context) -> None:
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
 
-		day = update.callback_query.data.split(' ')[1]
-		for key in sorted(self.current_events[day]):
-			keyboard.append([InlineKeyboardButton(key, callback_data = f'print_event {day} {key}')])
+		answer_text = None
+
+		if len(callback_data) == 0:
+			answer_text = 'Выберите день:'
+			for key in sorted(self.current_events.keys()):
+				keyboard.append([InlineKeyboardButton(key, callback_data = f'get_events {key}')])
+		elif len(callback_data) == 1:
+			answer_text = 'Выберите время:'
+			day = callback_data[0]
+			for key in sorted(self.current_events[day]):
+				keyboard.append([InlineKeyboardButton(key, callback_data = f'get_events {day} {key}')])
+		else:
+			day, time = callback_data
+			if self.connected_users[context._user_id].role == 'root':
+				keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
+						 				callback_data=f'event_modification change_existing_event {day} {time}'),
+								InlineKeyboardButton(BUTTON_NAMINGS.remove_event, 
+										callback_data=f'remove_event {day} {time} enquire'),
+								])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
-		await update.callback_query.edit_message_text(text = 'Выберите время:', reply_markup = keyboard)
-		await context.bot.answer_callback_query(update.callback_query.id)
 
-
-	async def print_event(self, update, context) -> None:
-		day, time = tuple(update.callback_query.data.split(' ')[1::])
-
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message'),
-					]]
-
-		if self.connected_users[context._user_id].role == 'root':
-			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
-					 				callback_data=f'event_modification change_existing_event {day} {time}'),
-							InlineKeyboardButton(BUTTON_NAMINGS.remove_event, 
-									callback_data=f'remove_event {day} {time} enquire'),
-							])
-
-		keyboard = InlineKeyboardMarkup(keyboard)
-
-		await self.current_events[day][time].print_event(update, context, reply_markup = keyboard)
+		if answer_text is not None:
+			await update.callback_query.edit_message_text(text = answer_text, reply_markup = keyboard)
+		else:
+			await self.current_events[day][time].print_event(update, context, reply_markup = keyboard)
 
 		await context.bot.answer_callback_query(update.callback_query.id)
-		#await self.main_menu(update, context, force_message = True)
 
 
 	async def remove_event(self, update, context) -> None:
@@ -390,6 +410,28 @@ class Bot:
 		await context.bot.answer_callback_query(update.callback_query.id)
 
 
+	async def edit_newsletter(self, update, context):
+
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if update.callback_query is not None:
+			self.connected_users[context._user_id].current_state = "edit_newsletter"
+			await self.daily_newsletter(context, reply_markup=keyboard)
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['edit_newsletter'])
+			await context.bot.answer_callback_query(update.callback_query.id)
+		else:
+			self.connected_users[context._user_id].current_state = None
+			if update.message.photo:
+				self.static_data['newsletter'] = {"text":update.message.caption,
+							  "photo":await save_photo(context, update.message.photo[-1])}
+			else:
+				self.static_data['newsletter'] = {'text':update.message.text, 'photo':None}
+
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['newsletter_changed'], reply_markup=keyboard)
+
+
 def main():
 	print(f'{clr.green}Starting bot...')
 	config = read_config()
@@ -397,25 +439,26 @@ def main():
 
 	application = Application.builder().token(config['BOT_TOKEN']).read_timeout(7).get_updates_read_timeout(42).build()
 	application.add_handler(CommandHandler("start", bot.start_session))
+	application.add_handler(CommandHandler("refresh", bot.refresh))
 	application.add_handler(MessageHandler(filters.ALL, bot.handle_message))
 
 	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
 	application.add_handler(CallbackQueryHandler(bot.main_menu, pattern='main_menu'))
 	application.add_handler(CallbackQueryHandler(bot.get_events, pattern='get_events'))
-	application.add_handler(CallbackQueryHandler(bot.print_event, pattern='print_event'))
-	application.add_handler(CallbackQueryHandler(bot.show_events_on_day, pattern='show_events_on_day'))
 	application.add_handler(CallbackQueryHandler(bot.save_modified_event, pattern='save_modified_event'))
 	application.add_handler(CallbackQueryHandler(bot.decline_modified_event, pattern='decline_modified_event'))
 	application.add_handler(CallbackQueryHandler(bot.event_modification, pattern='event_modification'))
-	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 	application.add_handler(CallbackQueryHandler(bot.remove_event, pattern='remove_event'))
 	application.add_handler(CallbackQueryHandler(bot.user_settings, pattern='user_settings'))
+	application.add_handler(CallbackQueryHandler(bot.edit_newsletter, pattern='edit_newsletter'))
+
+	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 
 
 	print(f'{clr.cyan}Bot is online')
 
 	application.run_polling()
-	#bot.save_all_data()
+	bot.save_all_data()
 
 
 if __name__ == '__main__':

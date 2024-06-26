@@ -1,10 +1,11 @@
 """
 Bot backend utilities
 """
+import os
 import json
 
 from datetime import datetime
-from constants import DATETIME_INPUT_FORMAT
+from constants import DATETIME_INPUT_FORMAT, IMAGES_DIR
 
 class clr:
 	"""
@@ -34,3 +35,29 @@ def read_date_from_message(message:str, form = DATETIME_INPUT_FORMAT):
 		return date.replace(datetime.now().year)
 	except ValueError:
 		return None
+
+
+async def load_photo(context, file_id):
+	""" Prepare photo instance to be sent by bot.send_photo method """
+
+	photo = await context.bot.getFile(file_id)
+	if not photo:
+		photo = open(os.path.join(IMAGES_DIR, file_id), 'rb')
+	else:
+		photo = file_id
+
+	return photo
+
+
+async def save_photo(context, picture) -> str:
+	""" If photo hasnt been saved already, download it to drive """
+
+	fname = picture.file_id
+	if fname in os.listdir(IMAGES_DIR):
+		return fname
+
+	file = await context.bot.getFile(picture)
+	file_path = os.path.join(IMAGES_DIR, fname)
+	await file.download_to_drive(file_path)
+
+	return fname

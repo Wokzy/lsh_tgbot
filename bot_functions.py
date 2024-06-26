@@ -36,8 +36,8 @@ async def handle_event_modification_callback_query(bot, update, context) -> str:
 		user.modified_event.description = update.message.text
 	elif state == 'event_picture':
 		if update.message.photo:
-				user.modified_event.picture_file_id = await events.save_event_picture(bot = context.bot, 
-																					 picture = update.message.photo[-1])
+				user.modified_event.picture_file_id = await utils.save_photo(
+					context = context, picture = update.message.photo[-1])
 	elif state == 'new_event':
 		user.modified_event = events.Event()
 
@@ -58,6 +58,7 @@ def load_static_data() -> dict:
 
 
 def save_static_data(data:dict) -> None:
+	print('saving')
 	with open(STATIC_DATA_FNAME, 'wb') as f:
 		pickle.dump(data, f)
 
