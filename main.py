@@ -9,6 +9,7 @@ from constants import (
 	DAILY_NEWSLETTER_TIME,
 	ROLE_MAPPING,
 	TIMEZONE,
+	DEBUG_MODE,
 )
 
 from utils import (
@@ -124,8 +125,19 @@ class BotUser:
 		print(context.job_queue.jobs())
 
 
-	async def notify(self, context) -> None:
-		print('Notification mock')
+	def setup_event_notifications(self, context, event_modification):
+		context.job_queue.run_repeating(
+			callback=event_modification,
+			interval=60*15, # 15 minutes
+			name=f"{self.user_id}",
+			chat_id=self.chat_id,
+			user_id=self.user_id,
+			first=1
+			)
+
+
+	async def notify(self, context, event) -> None:
+		print(f'{clr.green}Notification mock {self.user_id}{clr.yellow}')
 
 
 class Bot:
@@ -136,7 +148,7 @@ class Bot:
 
 		self.static_data = bot_functions.load_static_data()
 		self.connected_users = self.static_data.get('connected_users', {})
-		self.current_events = events.load_events()
+		self.current_events, self.event_mapping = events.load_events()
 
 		self.__refreshed = False
 
@@ -144,7 +156,7 @@ class Bot:
 	def save_all_data(self) -> None:
 		self.static_data['connected_users'] = self.connected_users
 
-		events.save_events(self.current_events)
+		events.save_events(self.current_events, self.event_mapping)
 		bot_functions.save_static_data(self.static_data)
 		print(f'{clr.green}saved{clr.yellow}')
 
@@ -164,8 +176,7 @@ class Bot:
 		for user_id, user in self.connected_users.items():
 			if user.notifications_flag:
 				user.setup_daily_newsletter(context, self.daily_newsletter)
-				for event in user.notify_events:
-					await self.setup_notification(update, context, user=user, event=event)
+				user.setup_event_notifications(context, self.event_notification)
 
 		self.__refreshed = True
 		print(f'{clr.yellow}Refreshed')
@@ -179,8 +190,7 @@ class Bot:
 			self.connected_users[context._user_id] = BotUser(user_id=context._user_id, chat_id=context._chat_id)
 
 			self.connected_users[context._user_id].setup_daily_newsletter(context, self.daily_newsletter)
-
-
+			self.connected_users[context._user_id].setup_event_notifications(context, self.event_notification)
 
 		await self.main_menu(update, context)
 
@@ -239,6 +249,7 @@ class Bot:
 		# await self.main_menu(update, context)
 		await context.bot.answer_callback_query(update.callback_query.id)
 		print(context.job_queue.jobs())
+		print(self.connected_users[context._user_id].notify_events)
 
 
 	async def main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, force_message = False) -> None:
@@ -296,7 +307,7 @@ class Bot:
 			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message')]]
 
 			if user.notifications_flag:
-				if event not in user.notify_events:
+				if event.event_id not in user.notify_events:
 					keyboard[0].append(InlineKeyboardButton(BUTTON_NAMINGS.notify,
 						callback_data=f'setup_notification enable {day} {time}'))
 				else:
@@ -337,7 +348,7 @@ class Bot:
 			await context.bot.answer_callback_query(update.callback_query.id)
 		elif status == 'confirm':
 			del self.current_events[day][time]
-			events.save_events(self.current_events)
+			events.save_events(self.current_events, self.event_mapping)
 			await context.bot.answer_callback_query(update.callback_query.id, text = "Мероприятие было удалено")
 			await self.main_menu(update, context)
 		elif status == 'decline':
@@ -406,7 +417,8 @@ class Bot:
 			del self.current_events[user.modified_event_old_position[0]][user.modified_event_old_position[1]]
 
 		self.current_events[user.modified_event.string_date()][user.modified_event.string_time()] = user.modified_event
-		events.save_events(self.current_events)
+		self.event_mapping[user.modified_event.event_id] = user.modified_event
+		events.save_events(self.current_events, self.event_mapping)
 
 		print(f"Event was saved by {context._user_id}")
 
@@ -505,7 +517,7 @@ class Bot:
 		await context.bot.answer_callback_query(update.callback_query.id)
 
 
-	async def setup_notification(self, update, context, user, event=None) -> None:
+	async def setup_notification(self, update, context, user=None, event=None) -> None:
 
 		if event is None:
 			state, day, time = update.callback_query.data.split(' ')[1::]
@@ -514,33 +526,27 @@ class Bot:
 		else:
 			state = 'enable'
 
+		job_name = f'{event.name}_{user.user_id}'
+
 		if state == 'enable':
-			when = datetime.datetime(
-				year=event.datetime.year,
-				month=event.datetime.month,
-				day=event.datetime.day,
-				hour=event.datetime.hour - 1,
-				minute=event.datetime.minute,
-				tzinfo=TIMEZONE)
-
-			context.job_queue.run_once(
-					user.notify,
-					data=event,
-					user_id=context._user_id,
-					chat_id=context._chat_id,
-					name=f'{event.name}_{user.user_id}',
-					when=when)
-
-			user.notify_events.add(event)
-
-			if update.callback_query is not None:
-				await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание установлено')
+			user.notify_events.add(event.event_id)
+			await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание установлено')
 		elif state == 'disable':
-
-
+			user.notify_events.remove(event.event_id)
 			await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание отключено')
 
 		await self.main_menu(update, context, force_message=True)
+
+
+	async def event_notification(self, context):
+		""" Check all notifications and notify """
+
+		user = self.connected_users[context._user_id]
+		for event_id in list(user.notify_events):
+			event = self.event_mapping[event_id]
+			if DEBUG_MODE or (event.datetime - datetime.now()).total_seconds() < 3600:
+				await user.notify(context, event)
+				user.notify_events.remove(event_id)
 
 
 

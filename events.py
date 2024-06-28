@@ -17,7 +17,11 @@ class Event:
 		self.picture_file_id = picture_file_id
 		self.description = description
 
-		# self.event_id = random.randint(1, 1<<64)
+		self.event_id = random.randint(1, 1<<64)
+
+
+	def __eq__(self, another) -> bool:
+		return self.event_id == another.event_id
 
 
 	def string_datetime(self) -> str:
@@ -46,20 +50,22 @@ class Event:
 def load_events() -> dict:
 	file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
 	if not os.path.exists(file_path):
-		return {}
+		return {}, {}
 
 	with open(file_path, 'rb') as f:
 		events = pickle.load(f)
+		event_mapping = pickle.load(f)
 		f.close()
 
-	return events
+	return events, event_mapping
 
 
-def save_events(events:dict) -> None:
+def save_events(events:dict, event_mapping:dict) -> None:
 	file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
 
 	with open(file_path, 'wb') as f:
 		pickle.dump(events, f)
+		pickle.dump(event_mapping, f)
 		f.close()
 
 
