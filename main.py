@@ -138,6 +138,7 @@ class BotUser:
 
 	async def notify(self, context, event) -> None:
 		print(f'{clr.green}Notification mock {self.user_id}{clr.yellow}')
+		await event.print_event(update=None, context=context)
 
 
 class Bot:
@@ -544,7 +545,7 @@ class Bot:
 		user = self.connected_users[context._user_id]
 		for event_id in list(user.notify_events):
 			event = self.event_mapping[event_id]
-			if DEBUG_MODE or (event.datetime - datetime.now()).total_seconds() < 3600:
+			if DEBUG_MODE or (event.datetime - datetime.datetime.now()).total_seconds() < 3600:
 				await user.notify(context, event)
 				user.notify_events.remove(event_id)
 
