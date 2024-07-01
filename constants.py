@@ -7,6 +7,7 @@ EVENTS_DIR = 'events/'
 IMAGES_DIR = 'images/'
 
 EVENTS_FNAME = 'events_data.bin'
+KOMSA_LIST_FNAME = 'komsa.bin'
 STATIC_DATA_FNAME = 'static_data.bin'
 
 TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
@@ -16,6 +17,9 @@ DATETIME_INPUT_FORMAT = "%H:%M %d.%m"
 
 DEBUG_MODE = '--debug' in sys.argv
 
+DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0, tzinfo=TIMEZONE)
+
+
 if DEBUG_MODE:
 	_debug_time = datetime.datetime.now()
 	DAILY_NEWSLETTER_TIME = datetime.time(_debug_time.hour,
@@ -23,8 +27,6 @@ if DEBUG_MODE:
 										(_debug_time.second + 10) % 60, 
 										0,
 										tzinfo=TIMEZONE)
-else:
-	DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0, tzinfo=TIMEZONE)
 
 
 class BUTTON_NAMINGS:
@@ -49,6 +51,7 @@ class BUTTON_NAMINGS:
 	canteen_menu             = "Меню"
 	notify                   = "Напомнить"
 	disnotify                = "Не напоминать"
+	update_komsa_description = "Обновить своё описание (комса)"
 
 
 MISC_MESSAGES = {
@@ -64,6 +67,8 @@ MISC_MESSAGES = {
 	"newsletter_changed": "Рассылка была успешно изменена",
 	"edit_canteen_menu": "Если вы хотите редактировать меню, то просто отправьте новое",
 	"canteen_menu_chaged": "Меню было успешно отредактировано",
+	"update_komsa_description":"Отправьте своё новое описание, можно прикрепить одно фото",
+	"update_komsa_description_success":"Вы успешно обновили информацию о себе"
 }
 
 ROLE_MAPPING = {

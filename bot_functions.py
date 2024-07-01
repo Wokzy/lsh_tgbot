@@ -4,7 +4,11 @@ import utils
 import events
 import pickle
 
-from constants import STATIC_DATA_FNAME
+from utils import read_config
+
+
+CONFIG = read_config()
+
 
 async def handle_event_modification_callback_query(bot, update, context) -> str:
 	user = bot.connected_users[context._user_id]
@@ -47,24 +51,43 @@ async def handle_event_modification_callback_query(bot, update, context) -> str:
 	return state
 
 
-def load_static_data() -> dict:
-	if STATIC_DATA_FNAME not in os.listdir():
-		return {}
-
-	with open(STATIC_DATA_FNAME, 'rb') as f:
-		data = pickle.load(f)
-
-	return data
-
-
-def save_static_data(data:dict) -> None:
-	print('saving')
-	with open(STATIC_DATA_FNAME, 'wb') as f:
-		pickle.dump(data, f)
-
-
 def match_auth_data(data:dict) -> bool:
 	""" TODO """
 	return True
 
 
+async def authorize_user(user, update, context) -> bool:
+	""" Returns True if success """
+	user.current_state = None
+
+	data = update.message.text.split(' ')
+
+	# if context._user_id in CONFIG['ROOT_USERS']:
+	# 	user.role = 'root'
+	# 	await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как комсёнок")
+	# 	return True
+
+	if len(data) < 3:
+		await context.bot.send_message(context._chat_id, text="Некорректный формат")
+		return False
+
+	auth_data = {
+				'grade':data[0],
+				'surname':data[1],
+				'name':data[2]}
+
+	if len(data) == 4:
+		if data[3] == CONFIG["TUTOR_PASSWORD"]:
+			user.role = 'tutor'
+			await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как воспитатель")
+		elif data[3] == CONFIG["ROOT_PASSWORD"]:
+			user.role = 'root'
+			await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как комсёнок")
+	elif not match_auth_data(auth_data):
+		await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['wrong_auth_data'])
+		return False
+
+	user.auth_data = auth_data
+	await user.print_authorization_data(update, context)
+
+	return True

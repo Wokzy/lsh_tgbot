@@ -3,32 +3,15 @@ import events
 import datetime
 import bot_functions
 
-from constants import (
-	BUTTON_NAMINGS,
-	MISC_MESSAGES,
-	DAILY_NEWSLETTER_TIME,
-	ROLE_MAPPING,
-	TIMEZONE,
-	DEBUG_MODE,
-)
-
-from utils import (
-	clr,
-	read_config,
-	save_photo,
-	load_photo,
-	read_date_from_message
-)
-
 from telegram import (
-	KeyboardButton,
+	# KeyboardButton,
 	# KeyboardButtonPollType,
 	# Poll,
-	ReplyKeyboardMarkup,
+	# ReplyKeyboardMarkup,
 	InlineKeyboardButton,
 	InlineKeyboardMarkup,
 	# ReplyKeyboardRemove,
-	Update
+	Update,
 )
 
 from telegram.ext import (
@@ -38,10 +21,32 @@ from telegram.ext import (
 	MessageHandler,
 	CallbackQueryHandler,
 	JobQueue,
-	#PollAnswerHandler,
-	#PollHandler,
+	# PollAnswerHandler,
+	# PollHandler,
 	filters,
 )
+
+from constants import (
+	BUTTON_NAMINGS,
+	MISC_MESSAGES,
+	DAILY_NEWSLETTER_TIME,
+	ROLE_MAPPING,
+	DEBUG_MODE,
+)
+
+from utils import (
+	clr,
+	read_config,
+	save_photo,
+	load_photo,
+	load_komsa_list,
+	save_komsa_list,
+	load_static_data,
+	save_static_data,
+	print_komsa_description,
+)
+
+
 
 
 __author__ = 'Yegor Yershov'
@@ -60,7 +65,7 @@ class BotUser:
 
 		self.role = role
 		self.current_state = None
-		self.authorization = None
+		self.auth_data = {}
 
 		# FIXME
 		#self.event_creation_data = {}
@@ -74,44 +79,13 @@ class BotUser:
 
 	async def print_authorization_data(self, update, context) -> None:
 
-		if self.authorization is not None:
+		if self.auth_data:
 			text = 'Информация о вас:\n\n' + \
 				  f'Роль: {ROLE_MAPPING[self.role]}\n' + \
-				  f'Класс: {self.authorization["grade"]}\n' + \
-				  f'Имя Фамилия: {self.authorization["name"]} {self.authorization["surname"]}'
+				  f'Класс: {self.auth_data["grade"]}\n' + \
+				  f'Имя Фамилия: {self.auth_data["name"]} {self.auth_data["surname"]}'
 
 		await context.bot.send_message(context._chat_id, text=text)
-
-
-	async def authorize(self, update, context) -> None:
-		self.current_state = None
-
-		data = update.message.text.split(' ')
-
-		if CONFIG["ROOT_PASSWORD"] in data or context._user_id in CONFIG['ROOT_USERS']:
-			self.role = 'root'
-			await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как комсёнок")
-			return
-
-		if len(data) < 3:
-			await context.bot.send_message(context._chat_id, text="Некорректный формат")
-			return
-
-		auth_data = {
-					'grade':data[0],
-					'surname':data[1],
-					'name':data[2]}
-
-		if len(data) == 4:
-			if data[3] == CONFIG["TUTOR_PASSWORD"]:
-				self.role = 'tutor'
-				await context.bot.send_message(context._chat_id, text="Вы успешно авторизировались как воспитатель")
-		elif not bot_functions.match_auth_data(auth_data):
-			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['wrong_auth_data'])
-			return
-
-		self.authorization = auth_data
-		await self.print_authorization_data(update, context)
 
 
 	def setup_daily_newsletter(self, context, daily_newsletter):
@@ -141,15 +115,20 @@ class BotUser:
 		await event.print_event(update=None, context=context)
 
 
+
 class Bot:
 	def __init__(self):
 		"""
 			Load user's and event's info
+
+			self.komsa = {'user_id':{'description', 'photo'}}
 		"""
 
-		self.static_data = bot_functions.load_static_data()
+		self.static_data = load_static_data()
 		self.connected_users = self.static_data.get('connected_users', {})
 		self.current_events, self.event_mapping = events.load_events()
+
+		self.komsa = load_komsa_list()
 
 		self.__refreshed = False
 
@@ -158,7 +137,8 @@ class Bot:
 		self.static_data['connected_users'] = self.connected_users
 
 		events.save_events(self.current_events, self.event_mapping)
-		bot_functions.save_static_data(self.static_data)
+		save_static_data(self.static_data)
+		save_komsa_list(self.komsa)
 		print(f'{clr.green}saved{clr.yellow}')
 
 
@@ -221,6 +201,11 @@ class Bot:
 										 reply_markup=reply_markup)
 
 
+	async def authorize(self, update, context) -> bool:
+		user = self.connected_users[context._user_id]
+		status = await bot_functions.authorize_user(user, update, context)
+
+
 	async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 		answer_text = None
 
@@ -231,13 +216,15 @@ class Bot:
 			if user.modified_event is not None:
 				await self.event_modification(update, context)
 			if user.current_state == 'authorization':
-				await user.authorize(update, context)
+				await self.authorize(update, context)
 				await self.main_menu(update, context, force_message = True)
 				return
 			if user.current_state == 'edit_newsletter':
 				await self.edit_newsletter(update, context)
 			elif user.current_state == 'edit_canteen_menu':
 				await self.canteen_menu(update, context)
+			elif user.current_state == 'update_komsa_description':
+				await self.update_komsa_description(update, context)
 
 		if answer_text is not None:
 			await context.bot.send_message(update.message.chat.id, text = answer_text)
@@ -265,7 +252,8 @@ class Bot:
 		if self.connected_users[context._user_id].role == 'root': # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.edit_newsletter, callback_data = 'edit_newsletter default')])
-		if self.connected_users[context._user_id].authorization is None and self.connected_users[context._user_id].role != 'root':
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.update_komsa_description, callback_data = 'update_komsa_description')])
+		if not self.connected_users[context._user_id].auth_data and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
 
@@ -455,7 +443,7 @@ class Bot:
 		if status == "technical_support":
 			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['technical_support'])
 
-		if user.authorization is not None:
+		if user.auth_data:
 			await user.print_authorization_data(update, context, reply_markup=keyboard)
 		else:
 			await context.bot.send_message(context._chat_id, text="Выберите нужный пункт для настройки", reply_markup=keyboard)
@@ -527,8 +515,6 @@ class Bot:
 		else:
 			state = 'enable'
 
-		job_name = f'{event.name}_{user.user_id}'
-
 		if state == 'enable':
 			user.notify_events.add(event.event_id)
 			await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание установлено')
@@ -550,6 +536,36 @@ class Bot:
 				user.notify_events.remove(event_id)
 
 
+	async def update_komsa_description(self, update, context):
+
+		user = self.connected_users[context._user_id]
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if update.callback_query is not None:
+			user.current_state = 'update_komsa_description'
+
+			if user.user_id in self.komsa.keys():
+				await print_komsa_description(context, self.komsa[user.user_id])
+
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['update_komsa_description'], reply_markup=keyboard)
+			await context.bot.answer_callback_query(update.callback_query.id)
+			return
+
+		description = {'text':None, 'photo':None}
+
+		if not update.message.photo:
+			description['description'] = update.message.text
+		else:
+			description['description'] = update.message.caption
+			description['photo'] = await save_photo(context, update.message.photo[-1])
+
+		self.komsa[user.user_id] = description
+
+		save_komsa_list(self.komsa)
+		await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['update_komsa_description_success'], reply_markup=keyboard)
+
 
 
 
@@ -562,7 +578,8 @@ def main():
 	application.add_handler(CommandHandler("start", bot.start_session))
 	application.add_handler(CommandHandler("refresh", bot.refresh))
 	application.add_handler(CommandHandler("save_all", bot.async_save))
-	application.add_handler(MessageHandler(filters.ALL, bot.handle_message))
+	application.add_handler(MessageHandler(filters.PHOTO, bot.handle_message))
+	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
 
 	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
 	application.add_handler(CallbackQueryHandler(bot.main_menu, pattern='main_menu'))
@@ -575,6 +592,7 @@ def main():
 	application.add_handler(CallbackQueryHandler(bot.edit_newsletter, pattern='edit_newsletter'))
 	application.add_handler(CallbackQueryHandler(bot.canteen_menu, pattern='canteen_menu'))
 	application.add_handler(CallbackQueryHandler(bot.setup_notification, pattern='setup_notification'))
+	application.add_handler(CallbackQueryHandler(bot.update_komsa_description, pattern='update_komsa_description'))
 
 	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 
