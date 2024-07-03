@@ -38,7 +38,7 @@ def read_config(filename:str = 'config.json') -> dict:
 def read_date_from_message(message:str, form = DATETIME_INPUT_FORMAT):
 	try:
 		date = datetime.strptime(message, form)
-		return date.replace(datetime.now().year)
+		return date.replace(year=datetime.now().year, month=8)
 	except ValueError:
 		return None
 

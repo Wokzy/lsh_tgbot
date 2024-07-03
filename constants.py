@@ -13,7 +13,8 @@ STATIC_DATA_FNAME = 'static_data.bin'
 TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
 
 TIMEZONE = pytz.timezone('Asia/Novosibirsk')
-DATETIME_INPUT_FORMAT = "%H:%M %d.%m"
+DATETIME_INPUT_FORMAT = "%H:%M %d"
+DATETIME_HUMAN_FORMAT = "час:минута день (Пример: 14:00 24)"
 
 DEBUG_MODE = '--debug' in sys.argv
 
@@ -52,15 +53,17 @@ class BUTTON_NAMINGS:
 	notify                   = "Напомнить"
 	disnotify                = "Не напоминать"
 	update_komsa_description = "Обновить своё описание (комса)"
+	faq                      = "Часто задаваемые вопросы"
+	faq_other_questions      = "Остальные вопросы"
 
 
 MISC_MESSAGES = {
 	"event_naming" : "Введите название мероприятия",
-	"event_dating" : f"Введите дату и время мероприятия в формате {DATETIME_INPUT_FORMAT}",
+	"event_dating" : f"Введите дату и время мероприятия в формате {DATETIME_HUMAN_FORMAT}",
 	"event_picturing" : "Отправьте фото мероприятия",
 	"event_descriptioning" : "Отправьте описание мероприятия",
 	"removal_approvement": "Вы уверены в том, что хотите удалить данное мероприятие?",
-	"user_authorization": "Введите информацию о себе в формате [класс] [Фамилия] [Имя] [код воспитателя (если вы воспет какого-то класса)]\n\nПример:\n9-2 Баульбек Баульбеков",
+	"user_authorization": "Введите информацию о себе в формате [класс] [Имя] [Фамилия] [код воспитателя (если вы воспет какого-то класса)]\n\nПример:\n9-2 Баульбек Баульбеков",
 	"technical_support": "Связаться с разработчиком @Wokzy1 можно непосредственно в телеграмм",
 	"wrong_auth_data": "Проверьте корректность введёных данных. Убедитесь, что это точно ваше имя, ваша фамилия и вы учитесь именно в этом классе",
 	"edit_newsletter": "Если вы хотите изменить сообщение дневной рассылки, то просто отправьте новое (Прикрепляйте не более одного фото): ",
@@ -68,7 +71,8 @@ MISC_MESSAGES = {
 	"edit_canteen_menu": "Если вы хотите редактировать меню, то просто отправьте новое",
 	"canteen_menu_chaged": "Меню было успешно отредактировано",
 	"update_komsa_description":"Отправьте своё новое описание, можно прикрепить одно фото",
-	"update_komsa_description_success":"Вы успешно обновили информацию о себе"
+	"update_komsa_description_success":"Вы успешно обновили информацию о себе",
+	"faq":"Выберите вопрос:",
 }
 
 ROLE_MAPPING = {
@@ -76,3 +80,9 @@ ROLE_MAPPING = {
 	"tutor":"Воспитатель",
 	"root":"Комсёнок",
 }
+
+
+FAQ = [
+	("queston1", "answer1"),
+	("queston2", "answer2"),
+]

@@ -32,6 +32,7 @@ from constants import (
 	DAILY_NEWSLETTER_TIME,
 	ROLE_MAPPING,
 	DEBUG_MODE,
+	FAQ,
 )
 
 from utils import (
@@ -77,7 +78,7 @@ class BotUser:
 		self.notify_events = set()
 
 
-	async def print_authorization_data(self, update, context) -> None:
+	async def print_authorization_data(self, update, context, reply_markup=None) -> None:
 
 		if self.auth_data:
 			text = 'Информация о вас:\n\n' + \
@@ -85,18 +86,22 @@ class BotUser:
 				  f'Класс: {self.auth_data["grade"]}\n' + \
 				  f'Имя Фамилия: {self.auth_data["name"]} {self.auth_data["surname"]}'
 
-		await context.bot.send_message(context._chat_id, text=text)
+		await context.bot.send_message(context._chat_id, text=text, reply_markup=reply_markup)
 
 
 	def setup_daily_newsletter(self, context, daily_newsletter):
 		self.notifications_flag = True
+
+		job_name = f"newsletter_{self.chat_id}_{self.user_id}"
+
+		if len(context.job_queue.get_jobs_by_name(job_name)) > 0:
+			return
+
 		context.job_queue.run_daily(daily_newsletter,
 							DAILY_NEWSLETTER_TIME,
 							chat_id=self.chat_id,
 							user_id=self.user_id,
-							name="Daily Newsletter")
-
-		print(context.job_queue.jobs())
+							name=job_name)
 
 
 	def setup_event_notifications(self, context, event_modification):
@@ -160,6 +165,7 @@ class Bot:
 				user.setup_event_notifications(context, self.event_notification)
 
 		self.__refreshed = True
+		print(context.job_queue.jobs())
 		print(f'{clr.yellow}Refreshed')
 
 
@@ -236,7 +242,7 @@ class Bot:
 		await context.bot.send_message(context._chat_id, text = "echo")
 		# await self.main_menu(update, context)
 		await context.bot.answer_callback_query(update.callback_query.id)
-		print(context.job_queue.jobs())
+		#print(context.job_queue.jobs())
 		print(self.connected_users[context._user_id].notify_events)
 
 
@@ -247,7 +253,8 @@ class Bot:
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')], 
 					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')],
-					[InlineKeyboardButton(BUTTON_NAMINGS.user_settings, callback_data = 'user_settings default')]]
+					[InlineKeyboardButton(BUTTON_NAMINGS.user_settings, callback_data = 'user_settings default')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.faq, callback_data = 'faq default')]]
 
 		if self.connected_users[context._user_id].role == 'root': # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
@@ -515,10 +522,10 @@ class Bot:
 		else:
 			state = 'enable'
 
-		if state == 'enable':
+		if state == 'enable' and event.event_id not in user.notify_events:
 			user.notify_events.add(event.event_id)
 			await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание установлено')
-		elif state == 'disable':
+		elif state == 'disable' and event.event_id in user.notify_events:
 			user.notify_events.remove(event.event_id)
 			await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание отключено')
 
@@ -567,6 +574,20 @@ class Bot:
 		await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['update_komsa_description_success'], reply_markup=keyboard)
 
 
+	async def faq(self, update, context):
+
+		state = update.callback_query.data.split(' ')[1]
+
+		if state == 'default':
+			keyboard = [[InlineKeyboardButton(FAQ[i][0], callback_data=f"faq {i}")] for i in range(len(FAQ))]
+			response_text = MISC_MESSAGES['faq']
+		else:
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.faq_other_questions, callback_data='faq default')],
+						[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+			response_text = FAQ[int(state)][1]
+
+		keyboard = InlineKeyboardMarkup(keyboard)
+		await update.callback_query.edit_message_text(text=response_text, reply_markup=keyboard)
 
 
 def main():
@@ -593,6 +614,7 @@ def main():
 	application.add_handler(CallbackQueryHandler(bot.canteen_menu, pattern='canteen_menu'))
 	application.add_handler(CallbackQueryHandler(bot.setup_notification, pattern='setup_notification'))
 	application.add_handler(CallbackQueryHandler(bot.update_komsa_description, pattern='update_komsa_description'))
+	application.add_handler(CallbackQueryHandler(bot.faq, pattern='faq'))
 
 	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 

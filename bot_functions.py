@@ -27,7 +27,7 @@ async def handle_event_modification_callback_query(bot, update, context) -> str:
 		user.modified_event_old_position = (date, time)
 		answer_text = "Выберите нужный параметр для изменения:"
 	elif state == 'event_name':
-		if not update.message.text.isalnum():
+		if not update.message.text:
 			answer_text = "Некорректное название мероприятия"
 		else:
 			user.modified_event.name = update.message.text # This state is expected to be called from message_handler
@@ -35,7 +35,8 @@ async def handle_event_modification_callback_query(bot, update, context) -> str:
 		event_datetime = utils.read_date_from_message(update.message.text)
 		if not event_datetime:
 			answer_text = 'Некорретный формат времени'
-		user.modified_event.datetime = event_datetime
+		else:
+			user.modified_event.datetime = event_datetime
 	elif state == 'event_description':
 		user.modified_event.description = update.message.text
 	elif state == 'event_picture':
@@ -73,8 +74,8 @@ async def authorize_user(user, update, context) -> bool:
 
 	auth_data = {
 				'grade':data[0],
-				'surname':data[1],
-				'name':data[2]}
+				'name':data[1],
+				'surname':data[2]}
 
 	if len(data) == 4:
 		if data[3] == CONFIG["TUTOR_PASSWORD"]:
@@ -86,6 +87,8 @@ async def authorize_user(user, update, context) -> bool:
 	elif not match_auth_data(auth_data):
 		await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['wrong_auth_data'])
 		return False
+	else:
+		user.role = "user"
 
 	user.auth_data = auth_data
 	await user.print_authorization_data(update, context)

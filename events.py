@@ -37,7 +37,7 @@ class Event:
 	async def print_event(self, update, context, reply_markup = None) -> str:
 		# TODO
 
-		text = f"*{self.name}*\n\n{self.description}\n\n*{self.string_datetime()}*"
+		text = f"*{self.string_datetime()}*\n\n*{self.name}*\n\n{self.description}"
 
 		if self.picture_file_id is not None:
 
