@@ -1,4 +1,6 @@
 {
 	"BOT_TOKEN":"",
-	"ROOT_USERS":[]
+	"ROOT_USERS":[],
+	"ROOT_PASSWORD":"",
+	"TUTOR_PASSWORD":"",
 }

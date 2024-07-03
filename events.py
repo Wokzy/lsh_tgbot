@@ -1,5 +1,6 @@
 
 import os
+import utils
 import random
 import pickle
 import hashlib
@@ -16,6 +17,12 @@ class Event:
 		self.picture_file_id = picture_file_id
 		self.description = description
 
+		self.event_id = random.randint(1, 1<<64)
+
+
+	def __eq__(self, another) -> bool:
+		return self.event_id == another.event_id
+
 
 	def string_datetime(self) -> str:
 		return self.datetime.strftime('%d.%m %H:%M')
@@ -30,53 +37,35 @@ class Event:
 	async def print_event(self, update, context, reply_markup = None) -> str:
 		# TODO
 
-		text = f"**{self.name}**\n\n{self.description}\n\n**{self.string_datetime()}**"
+		text = f"*{self.string_datetime()}*\n\n*{self.name}*\n\n{self.description}"
 
 		if self.picture_file_id is not None:
-			photo = await context.bot.getFile(self.picture_file_id)
-			if not photo:
-				photo = open(os.path.join(IMAGES_DIR, fname), 'rb')
-			else:
-				photo = self.picture_file_id
 
-			await context.bot.send_photo(context._chat_id, caption = text, parse_mode="Markdown", photo = photo, reply_markup = reply_markup)
+			photo = await utils.load_photo(context, self.picture_file_id)
+			await context.bot.send_photo(context._chat_id, caption=text, parse_mode="Markdown", photo=photo, reply_markup=reply_markup)
 		else:
-			await context.bot.send_message(context._chat_id, text = text, parse_mode="Markdown", reply_markup = reply_markup)
-
-
-async def save_event_picture(bot, picture) -> str:
-	""" Returns filename of picture """
-	# fname = f'{random.randint(1, 1<<256)}{datetime.datetime.now().timestamp()}'.encode('utf-8')
-	# fname = hashlib.sha3_256(fname).hexdigest()
-
-	fname = picture.file_id
-	if fname in os.listdir(IMAGES_DIR):
-		return fname
-
-	file = await bot.getFile(picture)
-	file_path = os.path.join(IMAGES_DIR, fname)
-	await file.download_to_drive(file_path)
-
-	return fname
+			await context.bot.send_message(context._chat_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
 
 
 def load_events() -> dict:
 	file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
 	if not os.path.exists(file_path):
-		return {}
+		return {}, {}
 
 	with open(file_path, 'rb') as f:
 		events = pickle.load(f)
+		event_mapping = pickle.load(f)
 		f.close()
 
-	return events
+	return events, event_mapping
 
 
-def save_events(events:dict) -> None:
+def save_events(events:dict, event_mapping:dict) -> None:
 	file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
 
 	with open(file_path, 'wb') as f:
 		pickle.dump(events, f)
+		pickle.dump(event_mapping, f)
 		f.close()
 
 

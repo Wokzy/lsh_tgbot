@@ -1,19 +1,17 @@
 
 import events
+import datetime
 import bot_functions
 
-from constants import BUTTON_NAMINGS, MISC_MESSAGES
-from utils import clr, read_config, read_date_from_message
-
 from telegram import (
-	KeyboardButton,
+	# KeyboardButton,
 	# KeyboardButtonPollType,
 	# Poll,
-	ReplyKeyboardMarkup,
+	# ReplyKeyboardMarkup,
 	InlineKeyboardButton,
 	InlineKeyboardMarkup,
 	# ReplyKeyboardRemove,
-	Update
+	Update,
 )
 
 from telegram.ext import (
@@ -22,27 +20,53 @@ from telegram.ext import (
 	ContextTypes,
 	MessageHandler,
 	CallbackQueryHandler,
-	#PollAnswerHandler,
-	#PollHandler,
+	JobQueue,
+	# PollAnswerHandler,
+	# PollHandler,
 	filters,
 )
+
+from constants import (
+	BUTTON_NAMINGS,
+	MISC_MESSAGES,
+	DAILY_NEWSLETTER_TIME,
+	ROLE_MAPPING,
+	DEBUG_MODE,
+	FAQ,
+)
+
+from utils import (
+	clr,
+	read_config,
+	save_photo,
+	load_photo,
+	load_komsa_list,
+	save_komsa_list,
+	load_static_data,
+	save_static_data,
+	print_komsa_description,
+)
+
+
 
 
 __author__ = 'Yegor Yershov'
 
+CONFIG = read_config()
+
 
 class BotUser:
-	def __init__(self, is_root:bool = False):
+	def __init__(self, role:str = "user", user_id = None, chat_id = None):
 		"""
-		states:
-				waiting_for_password (root)
-				waiting_for_event_name
-				waiting_for_event_date
-				waiting_for_event_description (with picture)
+		roles: user, tutor, root
 		"""
 
-		self.is_root = is_root
+		self.user_id = user_id
+		self.chat_id = chat_id
+
+		self.role = role
 		self.current_state = None
+		self.auth_data = {}
 
 		# FIXME
 		#self.event_creation_data = {}
@@ -50,15 +74,99 @@ class BotUser:
 		self.modified_event_old_position = None
 
 
+		self.notifications_flag = False # Notificaitons toggle
+		self.notify_events = set()
+
+
+	async def print_authorization_data(self, update, context, reply_markup=None) -> None:
+
+		if self.auth_data:
+			text = 'Информация о вас:\n\n' + \
+				  f'Роль: {ROLE_MAPPING[self.role]}\n' + \
+				  f'Класс: {self.auth_data["grade"]}\n' + \
+				  f'Имя Фамилия: {self.auth_data["name"]} {self.auth_data["surname"]}'
+
+		await context.bot.send_message(context._chat_id, text=text, reply_markup=reply_markup)
+
+
+	def setup_daily_newsletter(self, context, daily_newsletter):
+		self.notifications_flag = True
+
+		job_name = f"newsletter_{self.chat_id}_{self.user_id}"
+
+		if len(context.job_queue.get_jobs_by_name(job_name)) > 0:
+			return
+
+		context.job_queue.run_daily(daily_newsletter,
+							DAILY_NEWSLETTER_TIME,
+							chat_id=self.chat_id,
+							user_id=self.user_id,
+							name=job_name)
+
+
+	def setup_event_notifications(self, context, event_modification):
+		context.job_queue.run_repeating(
+			callback=event_modification,
+			interval=60*15, # 15 minutes
+			name=f"{self.user_id}",
+			chat_id=self.chat_id,
+			user_id=self.user_id,
+			first=1
+			)
+
+
+	async def notify(self, context, event) -> None:
+		print(f'{clr.green}Notification mock {self.user_id}{clr.yellow}')
+		await event.print_event(update=None, context=context)
+
+
+
 class Bot:
 	def __init__(self):
 		"""
-			self.connected_users = {user_id: {'is_root':bool, 'current_state':str}}
-			
-		"""
-		self.connected_users = {}
+			Load user's and event's info
 
-		self.current_events = events.load_events()
+			self.komsa = {'user_id':{'description', 'photo'}}
+		"""
+
+		self.static_data = load_static_data()
+		self.connected_users = self.static_data.get('connected_users', {})
+		self.current_events, self.event_mapping = events.load_events()
+
+		self.komsa = load_komsa_list()
+
+		self.__refreshed = False
+
+
+	def save_all_data(self) -> None:
+		self.static_data['connected_users'] = self.connected_users
+
+		events.save_events(self.current_events, self.event_mapping)
+		save_static_data(self.static_data)
+		save_komsa_list(self.komsa)
+		print(f'{clr.green}saved{clr.yellow}')
+
+
+	async def async_save(self, update, context):
+		if self.connected_users[context._user_id].role != 'root':
+			return
+		self.save_all_data()
+
+
+	async def refresh(self, update, context) -> None:
+		""" root command to refresh all data (usually used after reboot) """
+		if self.__refreshed or context._user_id not in CONFIG['ROOT_USERS']:
+			return
+
+		print(f'{clr.yellow}', end='')
+		for user_id, user in self.connected_users.items():
+			if user.notifications_flag:
+				user.setup_daily_newsletter(context, self.daily_newsletter)
+				user.setup_event_notifications(context, self.event_notification)
+
+		self.__refreshed = True
+		print(context.job_queue.jobs())
+		print(f'{clr.yellow}Refreshed')
 
 
 	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -66,11 +174,42 @@ class Bot:
 
 		if user.id not in self.connected_users:
 			print(f'{clr.yellow}{user.first_name} {user.last_name} {user.username} [{user.id}] Has just launched the bot')
-			self.connected_users[context._user_id] = BotUser()
+			self.connected_users[context._user_id] = BotUser(user_id=context._user_id, chat_id=context._chat_id)
+
+			self.connected_users[context._user_id].setup_daily_newsletter(context, self.daily_newsletter)
+			self.connected_users[context._user_id].setup_event_notifications(context, self.event_notification)
 
 		await self.main_menu(update, context)
 
 		# await context.bot.send_message(update.message.chat.id, "You've already started me")
+
+
+	async def daily_newsletter(self, context, reply_markup=None) -> None:
+		""" Newsletter """
+
+		message = self.static_data.get('newsletter', {'text':'No newsletter', 'photo':None})
+
+		if reply_markup is None:
+			reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')]])
+
+
+		if message['photo'] is None:
+			await context.bot.send_message(context._chat_id,
+										   text=message['text'],
+										   parse_mode="Markdown",
+										   reply_markup=reply_markup)
+		else:
+			message['photo'] = await load_photo(context, message['photo'])
+			await context.bot.send_photo(context._chat_id,
+										 caption=message['text'],
+										 photo=message['photo'],
+										 parse_mode="Markdown",
+										 reply_markup=reply_markup)
+
+
+	async def authorize(self, update, context) -> bool:
+		user = self.connected_users[context._user_id]
+		status = await bot_functions.authorize_user(user, update, context)
 
 
 	async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -82,6 +221,16 @@ class Bot:
 			user = self.connected_users[context._user_id]
 			if user.modified_event is not None:
 				await self.event_modification(update, context)
+			if user.current_state == 'authorization':
+				await self.authorize(update, context)
+				await self.main_menu(update, context, force_message = True)
+				return
+			if user.current_state == 'edit_newsletter':
+				await self.edit_newsletter(update, context)
+			elif user.current_state == 'edit_canteen_menu':
+				await self.canteen_menu(update, context)
+			elif user.current_state == 'update_komsa_description':
+				await self.update_komsa_description(update, context)
 
 		if answer_text is not None:
 			await context.bot.send_message(update.message.chat.id, text = answer_text)
@@ -93,6 +242,8 @@ class Bot:
 		await context.bot.send_message(context._chat_id, text = "echo")
 		# await self.main_menu(update, context)
 		await context.bot.answer_callback_query(update.callback_query.id)
+		#print(context.job_queue.jobs())
+		print(self.connected_users[context._user_id].notify_events)
 
 
 	async def main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, force_message = False) -> None:
@@ -100,14 +251,25 @@ class Bot:
 		self.connected_users[context._user_id].modified_event = None
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')], 
-					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')]]
+					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.user_settings, callback_data = 'user_settings default')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.faq, callback_data = 'faq default')]]
 
-		if self.connected_users[context._user_id].is_root or True: # TDDO
+		if self.connected_users[context._user_id].role == 'root': # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.edit_newsletter, callback_data = 'edit_newsletter default')])
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.update_komsa_description, callback_data = 'update_komsa_description')])
+		if not self.connected_users[context._user_id].auth_data and self.connected_users[context._user_id].role != 'root':
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
+							callback_data='_change_user_state authorization user_authorization')])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
 		response_text = 'Welcome!'
+
+		if update.callback_query is not None:
+			force_message = force_message or 'force_message' in update.callback_query.data
 
 		if update.callback_query and not force_message:# and update.callback_query.data == 'main_menu':
 			await update.callback_query.edit_message_text(text = response_text, reply_markup = keyboard)
@@ -119,47 +281,50 @@ class Bot:
 
 
 	async def get_events(self, update, context) -> None:
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-		for key in sorted(self.current_events.keys()):
-			keyboard.append([InlineKeyboardButton(key, callback_data = f'show_events_on_day {key}')])
 
-		keyboard = InlineKeyboardMarkup(keyboard)
+		callback_data = update.callback_query.data.split(' ')[1::]
 
-		await update.callback_query.edit_message_text(text = 'Выберите день:', reply_markup = keyboard)
-		await context.bot.answer_callback_query(update.callback_query.id)
-
-
-	async def show_events_on_day(self, update, context) -> None:
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
 
-		day = update.callback_query.data.split(' ')[1]
-		for key in sorted(self.current_events[day]):
-			keyboard.append([InlineKeyboardButton(key, callback_data = f'print_event {day} {key}')])
+		answer_text = None
+
+		if len(callback_data) == 0:
+			answer_text = 'Выберите день:'
+			for key in sorted(self.current_events.keys()):
+				keyboard.append([InlineKeyboardButton(key, callback_data = f'get_events {key}')])
+		elif len(callback_data) == 1:
+			answer_text = 'Выберите время:'
+			day = callback_data[0]
+			for key in sorted(self.current_events[day]):
+				keyboard.append([InlineKeyboardButton(key, callback_data = f'get_events {day} {key}')])
+		else:
+			day, time = callback_data
+			user, event = self.connected_users[context._user_id], self.current_events[day][time]
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message')]]
+
+			if user.notifications_flag:
+				if event.event_id not in user.notify_events:
+					keyboard[0].append(InlineKeyboardButton(BUTTON_NAMINGS.notify,
+						callback_data=f'setup_notification enable {day} {time}'))
+				else:
+					keyboard[0].append(InlineKeyboardButton(BUTTON_NAMINGS.disnotify,
+						callback_data=f'setup_notification disable {day} {time}'))
+
+			if user.role == 'root':
+				keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
+						 				callback_data=f'event_modification change_existing_event {day} {time}'),
+								InlineKeyboardButton(BUTTON_NAMINGS.remove_event, 
+										callback_data=f'remove_event {day} {time} enquire'),
+								])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
-		await update.callback_query.edit_message_text(text = 'Выберите время:', reply_markup = keyboard)
-		await context.bot.answer_callback_query(update.callback_query.id)
 
-
-	async def print_event(self, update, context) -> None:
-		day, time = tuple(update.callback_query.data.split(' ')[1::])
-
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message'),
-					]]
-
-		if self.connected_users[context._user_id].is_root or True:
-			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
-					 				callback_data=f'event_modification change_existing_event {day} {time}'),
-							InlineKeyboardButton(BUTTON_NAMINGS.remove_event, 
-									callback_data=f'remove_event {day} {time} enquire'),
-							])
-
-		keyboard = InlineKeyboardMarkup(keyboard)
-
-		await self.current_events[day][time].print_event(update, context, reply_markup = keyboard)
+		if answer_text is not None:
+			await update.callback_query.edit_message_text(text = answer_text, reply_markup = keyboard)
+		else:
+			await self.current_events[day][time].print_event(update, context, reply_markup = keyboard)
 
 		await context.bot.answer_callback_query(update.callback_query.id)
-		#await self.main_menu(update, context, force_message = True)
 
 
 	async def remove_event(self, update, context) -> None:
@@ -179,7 +344,7 @@ class Bot:
 			await context.bot.answer_callback_query(update.callback_query.id)
 		elif status == 'confirm':
 			del self.current_events[day][time]
-			events.save_events(self.current_events)
+			events.save_events(self.current_events, self.event_mapping)
 			await context.bot.answer_callback_query(update.callback_query.id, text = "Мероприятие было удалено")
 			await self.main_menu(update, context)
 		elif status == 'decline':
@@ -230,7 +395,7 @@ class Bot:
 			await context.bot.answer_callback_query(update.callback_query.id)
 
 
-	async def save_modified_event(self, update, context):
+	async def save_modified_event(self, update, context) -> None:
 
 		if context._user_id not in self.connected_users.keys():
 			await context.bot.answer_callback_query(update.callback_query.id)
@@ -248,7 +413,8 @@ class Bot:
 			del self.current_events[user.modified_event_old_position[0]][user.modified_event_old_position[1]]
 
 		self.current_events[user.modified_event.string_date()][user.modified_event.string_time()] = user.modified_event
-		events.save_events(self.current_events)
+		self.event_mapping[user.modified_event.event_id] = user.modified_event
+		events.save_events(self.current_events, self.event_mapping)
 
 		print(f"Event was saved by {context._user_id}")
 
@@ -256,7 +422,7 @@ class Bot:
 		await self.main_menu(update, context, force_message = True)
 
 
-	async def decline_modified_event(self, update, context):
+	async def decline_modified_event(self, update, context) -> None:
 
 		if context._user_id not in self.connected_users.keys():
 			await context.bot.answer_callback_query(update.callback_query.id)
@@ -268,30 +434,195 @@ class Bot:
 		await self.main_menu(update, context, force_message = True)
 
 
+	async def user_settings(self, update, context) -> None:
+
+		user = self.connected_users[context._user_id]
+		status = update.callback_query.data.split(' ')[1]
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
+							callback_data='_change_user_state authorization user_authorization')],
+					 [InlineKeyboardButton(BUTTON_NAMINGS.technical_support, callback_data='user_settings technical_support')],
+		]
+
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if status == "technical_support":
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['technical_support'])
+
+		if user.auth_data:
+			await user.print_authorization_data(update, context, reply_markup=keyboard)
+		else:
+			await context.bot.send_message(context._chat_id, text="Выберите нужный пункт для настройки", reply_markup=keyboard)
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+
+
+	async def edit_newsletter(self, update, context) -> None:
+
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if update.callback_query is not None:
+			self.connected_users[context._user_id].current_state = "edit_newsletter"
+			await self.daily_newsletter(context, reply_markup=keyboard)
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['edit_newsletter'])
+			await context.bot.answer_callback_query(update.callback_query.id)
+		else:
+			self.connected_users[context._user_id].current_state = None
+			if update.message.photo:
+				self.static_data['newsletter'] = {"text":update.message.caption,
+							  "photo":await save_photo(context, update.message.photo[-1])}
+			else:
+				self.static_data['newsletter'] = {'text':update.message.text, 'photo':None}
+
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['newsletter_changed'], reply_markup=keyboard)
+
+
+	async def canteen_menu(self, update, context) -> None:
+		""" Print out canteen menu (supposed to be only text) """
+
+		menu = self.static_data.get('canteen_menu', "Menu:")
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if update.callback_query is None:
+			self.connected_users[context._user_id].current_state = None
+
+			if update.message.text is not None:
+				self.static_data['canteen_menu'] = update.message.text
+				await context.bot.send_message(context._chat_id,
+											   text=MISC_MESSAGES['canteen_menu_chaged'],
+											   reply_markup=keyboard)
+
+			return
+
+
+
+		if self.connected_users[context._user_id].role == 'root':
+			await context.bot.send_message(context._chat_id, text=menu)
+			self.connected_users[context._user_id].current_state = "edit_canteen_menu"
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['edit_canteen_menu'],
+										   reply_markup=keyboard)
+		else:
+			await context.bot.send_message(context._chat_id, text=menu, reply_markup=keyboard)
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+
+
+	async def setup_notification(self, update, context, user=None, event=None) -> None:
+
+		if event is None:
+			state, day, time = update.callback_query.data.split(' ')[1::]
+			user = self.connected_users[context._user_id]
+			event = self.current_events[day][time]
+		else:
+			state = 'enable'
+
+		if state == 'enable' and event.event_id not in user.notify_events:
+			user.notify_events.add(event.event_id)
+			await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание установлено')
+		elif state == 'disable' and event.event_id in user.notify_events:
+			user.notify_events.remove(event.event_id)
+			await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание отключено')
+
+		await self.main_menu(update, context, force_message=True)
+
+
+	async def event_notification(self, context):
+		""" Check all notifications and notify """
+
+		user = self.connected_users[context._user_id]
+		for event_id in list(user.notify_events):
+			event = self.event_mapping[event_id]
+			if DEBUG_MODE or (event.datetime - datetime.datetime.now()).total_seconds() < 3600:
+				await user.notify(context, event)
+				user.notify_events.remove(event_id)
+
+
+	async def update_komsa_description(self, update, context):
+
+		user = self.connected_users[context._user_id]
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if update.callback_query is not None:
+			user.current_state = 'update_komsa_description'
+
+			if user.user_id in self.komsa.keys():
+				await print_komsa_description(context, self.komsa[user.user_id])
+
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['update_komsa_description'], reply_markup=keyboard)
+			await context.bot.answer_callback_query(update.callback_query.id)
+			return
+
+		description = {'text':None, 'photo':None}
+
+		if not update.message.photo:
+			description['description'] = update.message.text
+		else:
+			description['description'] = update.message.caption
+			description['photo'] = await save_photo(context, update.message.photo[-1])
+
+		self.komsa[user.user_id] = description
+
+		save_komsa_list(self.komsa)
+		await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['update_komsa_description_success'], reply_markup=keyboard)
+
+
+	async def faq(self, update, context):
+
+		state = update.callback_query.data.split(' ')[1]
+
+		if state == 'default':
+			keyboard = [[InlineKeyboardButton(FAQ[i][0], callback_data=f"faq {i}")] for i in range(len(FAQ))]
+			response_text = MISC_MESSAGES['faq']
+		else:
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.faq_other_questions, callback_data='faq default')],
+						[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+			response_text = FAQ[int(state)][1]
+
+		keyboard = InlineKeyboardMarkup(keyboard)
+		await update.callback_query.edit_message_text(text=response_text, reply_markup=keyboard)
+
+
 def main():
 	print(f'{clr.green}Starting bot...')
 	config = read_config()
 	bot = Bot()
 
-	application = Application.builder().token(config['BOT_TOKEN']).build()
+	application = Application.builder().token(config['BOT_TOKEN']).read_timeout(7).get_updates_read_timeout(42).build()
 	application.add_handler(CommandHandler("start", bot.start_session))
-	application.add_handler(MessageHandler(filters.ALL, bot.handle_message))
+	application.add_handler(CommandHandler("refresh", bot.refresh))
+	application.add_handler(CommandHandler("save_all", bot.async_save))
+	application.add_handler(MessageHandler(filters.PHOTO, bot.handle_message))
+	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
 
 	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
 	application.add_handler(CallbackQueryHandler(bot.main_menu, pattern='main_menu'))
 	application.add_handler(CallbackQueryHandler(bot.get_events, pattern='get_events'))
-	application.add_handler(CallbackQueryHandler(bot.print_event, pattern='print_event'))
-	application.add_handler(CallbackQueryHandler(bot.show_events_on_day, pattern='show_events_on_day'))
 	application.add_handler(CallbackQueryHandler(bot.save_modified_event, pattern='save_modified_event'))
 	application.add_handler(CallbackQueryHandler(bot.decline_modified_event, pattern='decline_modified_event'))
 	application.add_handler(CallbackQueryHandler(bot.event_modification, pattern='event_modification'))
-	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 	application.add_handler(CallbackQueryHandler(bot.remove_event, pattern='remove_event'))
+	application.add_handler(CallbackQueryHandler(bot.user_settings, pattern='user_settings'))
+	application.add_handler(CallbackQueryHandler(bot.edit_newsletter, pattern='edit_newsletter'))
+	application.add_handler(CallbackQueryHandler(bot.canteen_menu, pattern='canteen_menu'))
+	application.add_handler(CallbackQueryHandler(bot.setup_notification, pattern='setup_notification'))
+	application.add_handler(CallbackQueryHandler(bot.update_komsa_description, pattern='update_komsa_description'))
+	application.add_handler(CallbackQueryHandler(bot.faq, pattern='faq'))
+
+	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 
 
 	print(f'{clr.cyan}Bot is online')
 
 	application.run_polling()
+	bot.save_all_data()
 
 
 if __name__ == '__main__':
