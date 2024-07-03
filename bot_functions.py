@@ -2,12 +2,78 @@
 import os
 import utils
 import events
+import random
 import pickle
 
-from utils import read_config
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+from constants import (
+	BUTTON_NAMINGS,
+	MISC_MESSAGES,
+	)
 
 
-CONFIG = read_config()
+CONFIG = utils.read_config()
+
+
+class CallKomsaRequest:
+	def __init__(self, sender_id:int, reciever_id:int):
+		self.request_id = random.randint(1, 1<<64)
+		self.sender_id = sender_id
+		self.reciever_id = reciever_id
+
+		self.confirmed_by_tutor = True
+		self._filally_confirmed = False
+
+
+def check_call_request_sender(lst:dict[int, CallKomsaRequest], sender_id:int) -> int:
+	for request_id, request in lst.items():
+		if request.sender_id == sender_id:
+			return request_id
+
+	return 0
+
+
+async def send_confirm_call_message_to_root(users:dict, request:CallKomsaRequest, context) -> None:
+	sender_data = users[request.sender_id].auth_data
+	root = users[request.reciever_id]
+
+	text = f'Вас вызывает {sender_data["name"]} {sender_data["surname"]} из {sender_data["dorms"]} общаги " + \
+		   f"{sender_data["room"]} блока.'
+
+	keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.accept_call_root, callback_data=f"confirm_call_from_root confirm {request.request_id}"),
+				 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_root, callback_data=f"confirm_call_from_root decline {request.request_id}")]]
+
+	keyboard = InlineKeyboardMarkup(keyboard)
+
+	await context.bot.send_message(root.chat_id, text=text, reply_markup=keyboard)
+
+
+async def send_confirm_call_message_to_tutor(users:dict, request:CallKomsaRequest, context) -> None:
+
+	keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.allow_call_tutor, callback_data=f"confirm_call_from_tutor confirm {request.request_id}"),
+				 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_tutor, callback_data=f"confirm_call_from_tutor decline {request.request_id}")]]
+
+	keyboard = InlineKeyboardMarkup(keyboard)
+	sender = users[request.sender_id]
+	root = users[request.reciever_id]
+
+	text = f'Ученик {sender.auth_data["name"]} {sender.auth_data["surname"]} хочет вызвать к себе комсёнка ' + \
+		   f'{root.auth_data["name"]} {root.auth_data["surname"]}. Разрешаете ли вы ему это сделать?'
+
+	for user in users.values():
+		if not user.auth_data or user.role != 'tutor':
+			continue
+
+		if user.auth_data["grade"] != sender.auth_data["grade"]:
+			continue
+
+		await context.bot.send_message(user.chat_id, text=text, reply_markup=keyboard)
+		request.confirmed_by_tutor = False
+
+	if request.confirmed_by_tutor:
+		await send_confirm_call_message_to_root(users, request, context)
+
 
 
 async def handle_event_modification_callback_query(bot, update, context) -> str:

@@ -107,4 +107,4 @@ async def print_komsa_description(context, description:dict, reply_markup=None):
 									 caption=description['description'],
 									 reply_markup=reply_markup)
 	else:
-		await context.bot.send_message(context._chat_id, text=description['description'])
+		await context.bot.send_message(context._chat_id, text=description['description'], reply_markup=reply_markup)

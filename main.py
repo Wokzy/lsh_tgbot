@@ -27,12 +27,13 @@ from telegram.ext import (
 )
 
 from constants import (
-	BUTTON_NAMINGS,
-	MISC_MESSAGES,
-	DAILY_NEWSLETTER_TIME,
-	ROLE_MAPPING,
-	DEBUG_MODE,
 	FAQ,
+	DEBUG_MODE,
+	ROLE_MAPPING,
+	MISC_MESSAGES,
+	BUTTON_NAMINGS,
+	KOMSA_CALL_COOLDOWN,
+	DAILY_NEWSLETTER_TIME,
 )
 
 from utils import (
@@ -127,6 +128,8 @@ class Bot:
 			Load user's and event's info
 
 			self.komsa = {'user_id':{'description', 'photo'}}
+			self.call_komsa_cooldown = {'user_id':cooldown_finish_datetime (datetime.datetime)}
+			self.pending_call_requests = {'request_id':bot_functions.CallKomsaRequest}
 		"""
 
 		self.static_data = load_static_data()
@@ -134,12 +137,16 @@ class Bot:
 		self.current_events, self.event_mapping = events.load_events()
 
 		self.komsa = load_komsa_list()
+		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {})
+		self.pending_call_requests = self.static_data.get('pending_call_requests', {})
 
 		self.__refreshed = False
 
 
 	def save_all_data(self) -> None:
 		self.static_data['connected_users'] = self.connected_users
+		self.static_data['call_komsa_cooldown'] = self.call_komsa_cooldown
+		self.static_data['pending_call_requests'] = self.pending_call_requests
 
 		events.save_events(self.current_events, self.event_mapping)
 		save_static_data(self.static_data)
@@ -260,6 +267,8 @@ class Bot:
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.edit_newsletter, callback_data = 'edit_newsletter default')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.update_komsa_description, callback_data = 'update_komsa_description')])
+		if self.connected_users[context._user_id].role == 'user':
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.komsa_list, callback_data = 'call_komsa default')])
 		if not self.connected_users[context._user_id].auth_data and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
@@ -580,6 +589,7 @@ class Bot:
 
 		if state == 'default':
 			keyboard = [[InlineKeyboardButton(FAQ[i][0], callback_data=f"faq {i}")] for i in range(len(FAQ))]
+			keyboard.insert(0, [InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')])
 			response_text = MISC_MESSAGES['faq']
 		else:
 			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.faq_other_questions, callback_data='faq default')],
@@ -587,7 +597,127 @@ class Bot:
 			response_text = FAQ[int(state)][1]
 
 		keyboard = InlineKeyboardMarkup(keyboard)
+		await context.bot.answer_callback_query(update.callback_query.id)
 		await update.callback_query.edit_message_text(text=response_text, reply_markup=keyboard)
+
+
+	async def order_song_for_disco(self, update, context):
+		pass
+		# await context.bot.send_message("Отправьте название трека и его исполнителя (по желанию можно прикрепить ссылку)")
+
+
+	async def call_komsa(self, update, context):
+
+		if len(self.komsa) == 0:
+			await context.bot.answer_callback_query(update.callback_query.id, text="add komsa list")
+			return
+
+		auth_data = self.connected_users[context._user_id].auth_data
+		if "room" not in auth_data.keys() or "dorms" not in auth_data.keys():
+			# FIXME
+			self.connected_users[context._user_id].auth_data['room'] = 'debug_room'
+			self.connected_users[context._user_id].auth_data['dorms'] = 'debug_dorms'
+			auth_data = self.connected_users[context._user_id].auth_data
+			# keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+
+			# await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['residense_required'],
+			# 								reply_markup=InlineKeyboardMarkup(keyboard))
+			# return
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+
+		callback_data = update.callback_query.data.split(' ')[1::]
+		state = callback_data[0]
+
+		if state == 'default':
+			state = 'show'
+			callback_data.append(list(self.komsa.keys())[0])
+
+		if state == 'show':
+			if context._user_id not in self.call_komsa_cooldown.keys():
+				self.call_komsa_cooldown[context._user_id] = datetime.datetime.now() - datetime.timedelta(days=1)
+
+			komsa_id = int(callback_data[1])
+			prev_komsa_id = list(self.komsa.keys())[(list(self.komsa.keys()).index(komsa_id) - 1) % len(self.komsa.keys())]
+			next_komsa_id = list(self.komsa.keys())[(list(self.komsa.keys()).index(komsa_id) + 1) % len(self.komsa.keys())]
+
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')],
+						[InlineKeyboardButton("<", callback_data=f'call_komsa show {prev_komsa_id}'),
+						 InlineKeyboardButton(">", callback_data=f'call_komsa show {next_komsa_id}')]]
+
+			if not bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
+				if datetime.datetime.now() >= self.call_komsa_cooldown[context._user_id]:
+					keyboard[1].insert(1, InlineKeyboardButton(BUTTON_NAMINGS.call_komsa, callback_data=f'call_komsa confirm_call {komsa_id}'))
+
+			await print_komsa_description(context, self.komsa[komsa_id], reply_markup=InlineKeyboardMarkup(keyboard))
+
+		if state == 'confirm_call':
+			komsa_id = int(callback_data[1])
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.confirm_call, callback_data=f'call_komsa do_call {komsa_id}'),
+						 InlineKeyboardButton(BUTTON_NAMINGS.decline_call, callback_data=f'main_menu')]]
+
+			keyboard = InlineKeyboardMarkup(keyboard)
+
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['confirm_call'], reply_markup=keyboard)
+
+		if state == 'do_call':
+			komsa_id = int(callback_data[1])
+
+			request = bot_functions.CallKomsaRequest(sender_id=context._user_id, reciever_id=komsa_id)
+			self.pending_call_requests[request.request_id] = request
+			self.call_komsa_cooldown[context._user_id] = datetime.datetime.now() + KOMSA_CALL_COOLDOWN
+			await bot_functions.send_confirm_call_message_to_tutor(self.connected_users, request=request, context=context)
+			await update.callback_query.edit_message_text(text="Запрос отправлен")
+
+
+	async def confirm_call_from_tutor(self, update, context):
+		state, request_id = update.callback_query.data.split(' ')[1::]
+		request_id = int(request_id)
+
+		if state == 'confirm':
+			await update.callback_query.edit_message_text(text="Вы разрешили")
+			await bot_functions.send_confirm_call_message_to_root(
+									users=self.connected_users,
+									request=self.pending_call_requests[request_id],
+									context=context)
+		else:
+			sender = self.connected_users[self.pending_call_requests[request_id].sender_id]
+			tutor = self.connected_users[context._user_id]
+			text = f"Воспитатель {tutor.auth_data['name']} {tutor.auth_data['surname']} запретил вам вызвать комсёнка"
+
+			await update.callback_query.edit_message_text(text="Вы запретили")
+			await context.bot.send_message(sender.chat_id, text=text)
+
+			del self.pending_call_requests[request_id]
+
+
+
+	async def confirm_call_from_root(self, update, context):
+		state, request_id = update.callback_query.data.split(' ')[1::]
+		request_id = int(request_id)
+
+		request = self.pending_call_requests[request_id]
+		sender = self.connected_users[request.sender_id]
+		root = self.connected_users[request.reciever_id]
+
+		if state == 'confirm':
+			await update.callback_query.edit_message_text(text="Не забудте прийти")
+
+			text = f"Комсёнок {root.auth_data['name']} {root.auth_data['surname']} к вам придёт, ждите"
+			await context.bot.send_message(sender.chat_id, text=text)
+		else:
+			await update.callback_query.edit_message_text(text="Уведомление отключено")
+
+			text = f"К сожалению комсёнок {root.auth_data['name']} {root.auth_data['surname']} к вам не сможет прийти"
+			await context.bot.send_message(sender.chat_id, text=text)
+
+		del self.pending_call_requests[request_id]
+		await context.bot.answer_callback_query(update.callback_query.id)
+
+
+
+
+
 
 
 def main():
@@ -602,19 +732,27 @@ def main():
 	application.add_handler(MessageHandler(filters.PHOTO, bot.handle_message))
 	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
 
-	application.add_handler(CallbackQueryHandler(bot.echo, pattern='echo'))
-	application.add_handler(CallbackQueryHandler(bot.main_menu, pattern='main_menu'))
-	application.add_handler(CallbackQueryHandler(bot.get_events, pattern='get_events'))
-	application.add_handler(CallbackQueryHandler(bot.save_modified_event, pattern='save_modified_event'))
-	application.add_handler(CallbackQueryHandler(bot.decline_modified_event, pattern='decline_modified_event'))
-	application.add_handler(CallbackQueryHandler(bot.event_modification, pattern='event_modification'))
-	application.add_handler(CallbackQueryHandler(bot.remove_event, pattern='remove_event'))
-	application.add_handler(CallbackQueryHandler(bot.user_settings, pattern='user_settings'))
-	application.add_handler(CallbackQueryHandler(bot.edit_newsletter, pattern='edit_newsletter'))
-	application.add_handler(CallbackQueryHandler(bot.canteen_menu, pattern='canteen_menu'))
-	application.add_handler(CallbackQueryHandler(bot.setup_notification, pattern='setup_notification'))
-	application.add_handler(CallbackQueryHandler(bot.update_komsa_description, pattern='update_komsa_description'))
-	application.add_handler(CallbackQueryHandler(bot.faq, pattern='faq'))
+	callback_handlers = {
+			bot.echo                     : 'echo',
+			bot.main_menu                : 'main_menu',
+			bot.get_events               : 'get_events',
+			bot.save_modified_event      : 'save_modified_event',
+			bot.decline_modified_event   : 'decline_modified_event',
+			bot.event_modification       : 'event_modification',
+			bot.remove_event             : 'remove_event',
+			bot.user_settings            : 'user_settings',
+			bot.edit_newsletter          : 'edit_newsletter',
+			bot.canteen_menu             : 'canteen_menu',
+			bot.setup_notification       : 'setup_notification',
+			bot.update_komsa_description : 'update_komsa_description',
+			bot.faq                      : 'faq',
+			bot.call_komsa               : 'call_komsa',
+			bot.confirm_call_from_tutor  : "confirm_call_from_tutor",
+			bot.confirm_call_from_root   : "confirm_call_from_root",
+	}
+
+	for function, pattern in callback_handlers.items():
+		application.add_handler(CallbackQueryHandler(function, pattern=pattern))
 
 	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 

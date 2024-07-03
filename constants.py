@@ -19,7 +19,7 @@ DATETIME_HUMAN_FORMAT = "час:минута день (Пример: 14:00 24)"
 DEBUG_MODE = '--debug' in sys.argv
 
 DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0, tzinfo=TIMEZONE)
-
+KOMSA_CALL_COOLDOWN = datetime.timedelta(days=1)
 
 if DEBUG_MODE:
 	_debug_time = datetime.datetime.now()
@@ -55,6 +55,15 @@ class BUTTON_NAMINGS:
 	update_komsa_description = "Обновить своё описание (комса)"
 	faq                      = "Часто задаваемые вопросы"
 	faq_other_questions      = "Остальные вопросы"
+	komsa_list               = "Список комсы"
+	call_komsa               = "Вызвать этого комсёнка"
+	confirm_call             = "Вызвать"
+	decline_call             = "Не вызывать"
+	additional_info          = "Указать дополнительную информацию"
+	allow_call_tutor         = "Да, разрешаю"
+	decline_call_tutor       = "Нет, я против"
+	accept_call_root         = "Я приду"
+	decline_call_root        = "Я не приду"
 
 
 MISC_MESSAGES = {
@@ -73,6 +82,8 @@ MISC_MESSAGES = {
 	"update_komsa_description":"Отправьте своё новое описание, можно прикрепить одно фото",
 	"update_komsa_description_success":"Вы успешно обновили информацию о себе",
 	"faq":"Выберите вопрос:",
+	"confirm_call":"Вы уверены, что хотите вызвать этого комсёнка? Прежде, чем он попадёт к вам, будет отправлен запрос на подтверждение вашем воспитателям класса. Если хотя бы один из них подтвердит вызов комсёнка, запрос на подтверждение будет отправлен самому комсёнку. Если на одном из этапов вызов будет прерван, вы будете уведомлены, иначе вы получите сообщение о грядущем прибытии комсёнка.",
+	"residense_required":f"Прежде, чем воспользоваться данной функцией, пожалуйста укажите свой блок и общажитие. Это можно сделать в настройках в поле {BUTTON_NAMINGS.additional_info}",
 }
 
 ROLE_MAPPING = {
