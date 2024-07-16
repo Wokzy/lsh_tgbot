@@ -10,7 +10,7 @@ from constants import EVENTS_DIR, IMAGES_DIR, EVENTS_FNAME#, TOTAL_DAYS_WITH_EVE
 
 
 class Event:
-	def __init__(self, name:str = 'None', date:datetime = datetime.now(), 
+	def __init__(self, name:str = 'None', date:datetime = datetime.now().replace(month=8), 
 						description:str = 'None', picture_file_id:str = None):
 		self.name = name
 		self.datetime = date

@@ -177,6 +177,9 @@ class Bot:
 
 
 	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+		if update.message is None:
+			return
+
 		user = update.message.from_user
 
 		if user.id not in self.connected_users:
