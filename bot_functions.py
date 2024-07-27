@@ -4,6 +4,7 @@ import utils
 import events
 import random
 import pickle
+import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -17,12 +18,17 @@ CONFIG = utils.read_config()
 
 
 class CallKomsaRequest:
-	def __init__(self, sender_id:int, reciever_id:int):
+	def __init__(self, sender_id:int, reciever_id:int, description:str):
 		self.request_id = random.randint(1, 1<<64)
+
 		self.sender_id = sender_id
 		self.reciever_id = reciever_id
+		self.description = description
 
-		self.confirmed_by_tutor = True
+		self.creation_date = datetime.datetime.now()
+
+		self.confirmed_by_user  = False
+		self.confirmed_by_tutor = True  # debug mode
 		self._filally_confirmed = False
 
 
@@ -38,8 +44,8 @@ async def send_confirm_call_message_to_root(users:dict, request:CallKomsaRequest
 	sender_data = users[request.sender_id].auth_data
 	root = users[request.reciever_id]
 
-	text = f'Вас вызывает {sender_data["name"]} {sender_data["surname"]} из {sender_data["dorms"]} общаги " + \
-		   f"{sender_data["room"]} блока.'
+	text = f'Вас вызывает {sender_data["name"]} {sender_data["surname"]}\n\n' + \
+		   f'со следующим описанием:\n\n{request.description}'
 
 	keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.accept_call_root, callback_data=f"confirm_call_from_root confirm {request.request_id}"),
 				 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_root, callback_data=f"confirm_call_from_root decline {request.request_id}")]]
@@ -59,7 +65,8 @@ async def send_confirm_call_message_to_tutor(users:dict, request:CallKomsaReques
 	root = users[request.reciever_id]
 
 	text = f'Ученик {sender.auth_data["name"]} {sender.auth_data["surname"]} хочет вызвать к себе комсёнка ' + \
-		   f'{root.auth_data["name"]} {root.auth_data["surname"]}. Разрешаете ли вы ему это сделать?'
+		   f'{root.auth_data["name"]} {root.auth_data["surname"]}. Разрешаете ли вы ему это сделать?\n' + \
+		   f'Ученик так же прикрепил описание:\n\n{request.description}'
 
 	for user in users.values():
 		if not user.auth_data or user.role != 'tutor':
@@ -140,8 +147,8 @@ async def authorize_user(user, update, context) -> bool:
 
 	auth_data = {
 				'grade':data[0],
-				'name':data[1],
-				'surname':data[2]}
+				'name':data[1].title(),
+				'surname':data[2].title()}
 
 	if len(data) == 4:
 		if data[3] == CONFIG["TUTOR_PASSWORD"]:

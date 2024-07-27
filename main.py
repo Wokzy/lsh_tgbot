@@ -1,4 +1,5 @@
 
+import sys
 import events
 import datetime
 import bot_functions
@@ -34,6 +35,7 @@ from constants import (
 	BUTTON_NAMINGS,
 	KOMSA_CALL_COOLDOWN,
 	DAILY_NEWSLETTER_TIME,
+	KOMSA_CALL_REQUEST_EXPIRATION_TIME,
 )
 
 from utils import (
@@ -137,8 +139,8 @@ class Bot:
 		self.current_events, self.event_mapping = events.load_events()
 
 		self.komsa = load_komsa_list()
-		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {})
-		self.pending_call_requests = self.static_data.get('pending_call_requests', {})
+		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {}) if "--no-call-requests" not in sys.argv else {}
+		self.pending_call_requests = self.static_data.get('pending_call_requests', {}) if "--no-call-requests" not in sys.argv else {}
 
 		self.__refreshed = False
 
@@ -241,6 +243,8 @@ class Bot:
 				await self.canteen_menu(update, context)
 			elif user.current_state == 'update_komsa_description':
 				await self.update_komsa_description(update, context)
+			elif 'call_komsa_description' in user.current_state:
+				await self.user_confirm_komsa_call(update, context)
 
 		if answer_text is not None:
 			await context.bot.send_message(update.message.chat.id, text = answer_text)
@@ -283,7 +287,7 @@ class Bot:
 		if update.callback_query is not None:
 			force_message = force_message or 'force_message' in update.callback_query.data
 
-		if update.callback_query and not force_message:# and update.callback_query.data == 'main_menu':
+		if update.callback_query and not force_message and update.callback_query.message.text is not None:
 			await update.callback_query.edit_message_text(text = response_text, reply_markup = keyboard)
 		else:
 			await context.bot.send_message(context._chat_id, text = response_text, reply_markup = keyboard)
@@ -609,23 +613,82 @@ class Bot:
 		# await context.bot.send_message("Отправьте название трека и его исполнителя (по желанию можно прикрепить ссылку)")
 
 
+	async def user_confirm_komsa_call(self, update, context):
+
+		user = self.connected_users[context._user_id]
+
+		if update.callback_query is None:
+			description = update.message.text
+			komsa_id = int(user.current_state.split(' ')[1])
+			request = bot_functions.CallKomsaRequest(sender_id=context._user_id,
+													 reciever_id=komsa_id,
+													 description=description)
+			self.pending_call_requests[request.request_id] = request
+
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.confirm_call, callback_data=f'user_confirm_komsa_call do_call {request.request_id}'),
+						 InlineKeyboardButton(BUTTON_NAMINGS.decline_call, callback_data=f'main_menu')],
+						[InlineKeyboardButton(BUTTON_NAMINGS.edit_komsa_call_description,
+											  callback_data=f'user_confirm_komsa_call default {komsa_id}'),]]
+
+			keyboard = InlineKeyboardMarkup(keyboard)
+
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['confirm_call'],
+										   reply_markup=keyboard)
+
+			return
+
+		callback_query = update.callback_query.data.split(' ')[1::]
+		state = callback_query[0]
+
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+
+		if state == 'default':
+			komsa_id = callback_query[1]
+
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.return_to_main_menu, callback_data=f'main_menu')]]
+			keyboard = InlineKeyboardMarkup(keyboard)
+
+			user.current_state = f"call_komsa_description {komsa_id}"
+
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['call_komsa_description'],
+										   reply_markup=keyboard)
+
+
+		if state == 'do_call':
+
+			request = self.pending_call_requests[int(callback_query[1])]
+			request.confirmed_by_user = True
+
+			self.call_komsa_cooldown[context._user_id] = datetime.datetime.now() + KOMSA_CALL_COOLDOWN
+			await bot_functions.send_confirm_call_message_to_tutor(self.connected_users, request=request, context=context)
+			await update.callback_query.edit_message_text(text="Запрос отправлен")
+
+
 	async def call_komsa(self, update, context):
+
+		# ======================= FIXME =========================
+
+		_delete = []
+		for key, request in self.pending_call_requests.items():
+			try:
+				if (datetime.datetime.now() - request.creation_date) > KOMSA_CALL_REQUEST_EXPIRATION_TIME:
+					_delete.append(key)
+			except AttributeError:
+				_delete.append(key)
+
+		for item in _delete:
+			del self.pending_call_requests[item]
+
+		# =======================================================
+
 
 		if len(self.komsa) == 0:
 			await context.bot.answer_callback_query(update.callback_query.id, text="add komsa list")
 			return
 
-		auth_data = self.connected_users[context._user_id].auth_data
-		if "room" not in auth_data.keys() or "dorms" not in auth_data.keys():
-			# FIXME
-			self.connected_users[context._user_id].auth_data['room'] = 'debug_room'
-			self.connected_users[context._user_id].auth_data['dorms'] = 'debug_dorms'
-			auth_data = self.connected_users[context._user_id].auth_data
-			# keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-
-			# await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['residense_required'],
-			# 								reply_markup=InlineKeyboardMarkup(keyboard))
-			# return
 
 		await context.bot.answer_callback_query(update.callback_query.id)
 
@@ -650,32 +713,18 @@ class Bot:
 
 			if not bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
 				if datetime.datetime.now() >= self.call_komsa_cooldown[context._user_id]:
-					keyboard[1].insert(1, InlineKeyboardButton(BUTTON_NAMINGS.call_komsa, callback_data=f'call_komsa confirm_call {komsa_id}'))
+
+					# add description for call
+					keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.call_komsa, callback_data=f'user_confirm_komsa_call default {komsa_id}')])
 
 			await print_komsa_description(context, self.komsa[komsa_id], reply_markup=InlineKeyboardMarkup(keyboard))
-
-		if state == 'confirm_call':
-			komsa_id = int(callback_data[1])
-			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.confirm_call, callback_data=f'call_komsa do_call {komsa_id}'),
-						 InlineKeyboardButton(BUTTON_NAMINGS.decline_call, callback_data=f'main_menu')]]
-
-			keyboard = InlineKeyboardMarkup(keyboard)
-
-			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['confirm_call'], reply_markup=keyboard)
-
-		if state == 'do_call':
-			komsa_id = int(callback_data[1])
-
-			request = bot_functions.CallKomsaRequest(sender_id=context._user_id, reciever_id=komsa_id)
-			self.pending_call_requests[request.request_id] = request
-			self.call_komsa_cooldown[context._user_id] = datetime.datetime.now() + KOMSA_CALL_COOLDOWN
-			await bot_functions.send_confirm_call_message_to_tutor(self.connected_users, request=request, context=context)
-			await update.callback_query.edit_message_text(text="Запрос отправлен")
 
 
 	async def confirm_call_from_tutor(self, update, context):
 		state, request_id = update.callback_query.data.split(' ')[1::]
 		request_id = int(request_id)
+
+		await context.bot.answer_callback_query(update.callback_query.id)
 
 		if state == 'confirm':
 			await update.callback_query.edit_message_text(text="Вы разрешили")
@@ -709,7 +758,7 @@ class Bot:
 			text = f"Комсёнок {root.auth_data['name']} {root.auth_data['surname']} к вам придёт, ждите"
 			await context.bot.send_message(sender.chat_id, text=text)
 		else:
-			await update.callback_query.edit_message_text(text="Уведомление отключено")
+			await update.callback_query.edit_message_text(text="Вы отказались прийти")
 
 			text = f"К сожалению комсёнок {root.auth_data['name']} {root.auth_data['surname']} к вам не сможет прийти"
 			await context.bot.send_message(sender.chat_id, text=text)
@@ -752,6 +801,7 @@ def main():
 			bot.call_komsa               : 'call_komsa',
 			bot.confirm_call_from_tutor  : "confirm_call_from_tutor",
 			bot.confirm_call_from_root   : "confirm_call_from_root",
+			bot.user_confirm_komsa_call  : "user_confirm_komsa_call",
 	}
 
 	for function, pattern in callback_handlers.items():
@@ -767,4 +817,7 @@ def main():
 
 
 if __name__ == '__main__':
+	if '--help' in sys.argv:
+		print('--debug\n--no-call-requests')
+		raise SystemExit
 	main()
