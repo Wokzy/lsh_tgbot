@@ -141,7 +141,7 @@ class Bot:
 		self.connected_users = self.static_data.get('connected_users', {})
 		self.current_events, self.event_mapping = load_events(event_object=events.Event())
 
-		self.komsa = load_komsa_list(user_instance=BotUser())
+		self.komsa = load_komsa_list()
 		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {}) if "--no-call-requests" not in sys.argv else {}
 		self.pending_call_requests = self.static_data.get('pending_call_requests', {}) if "--no-call-requests" not in sys.argv else {}
 
@@ -268,17 +268,16 @@ class Bot:
 		self.connected_users[context._user_id].modified_event = None
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')], 
-					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data = 'get_events')],
-					[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')],
-					[InlineKeyboardButton(BUTTON_NAMINGS.user_settings, callback_data = 'user_settings default')],
-					[InlineKeyboardButton(BUTTON_NAMINGS.faq, callback_data = 'faq default')]]
+					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data='get_events')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data='canteen_menu')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.user_settings, callback_data='user_settings default')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.faq, callback_data='faq default')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.komsa_list, callback_data='call_komsa default')]]
 
 		if self.connected_users[context._user_id].role == 'root': # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.edit_newsletter, callback_data = 'edit_newsletter default')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.update_komsa_description, callback_data = 'update_komsa_description')])
-		if self.connected_users[context._user_id].role == 'user':
-			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.komsa_list, callback_data = 'call_komsa default')])
 		if not self.connected_users[context._user_id].auth_data and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
@@ -301,6 +300,7 @@ class Bot:
 
 	async def get_events(self, update, context) -> None:
 
+		user = self.connected_users[context._user_id]
 		callback_data = update.callback_query.data.split(' ')[1::]
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
@@ -315,26 +315,29 @@ class Bot:
 			answer_text = 'Выберите время:'
 			day = callback_data[0]
 			for key in sorted(self.current_events[day]):
-				keyboard.append([InlineKeyboardButton(key, callback_data = f'get_events {day} {key}')])
-		else:
+				if not self.current_events[day][key].hidden or user.role == 'root':
+					keyboard.append([InlineKeyboardButton(key, callback_data = f'get_events {day} {key}')])
+		elif len(callback_data) == 2:
 			day, time = callback_data
-			user, event = self.connected_users[context._user_id], self.current_events[day][time]
-			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message')]]
+			event = self.current_events[day][time]
+			keyboard = events.get_event_keyboard(user, event)
+		else:
+			state, day, time = callback_data
+			event = self.current_events[day][time]
+			if state == 'hide':
+				event.hidden = True
+				await context.bot.answer_callback_query(update.callback_query.id, text=MISC_MESSAGES['hide_event'])
+			elif state == 'reveal':
+				event.hidden = False
+				await context.bot.answer_callback_query(update.callback_query.id, text=MISC_MESSAGES['reveal_event'])
 
-			if user.notifications_flag:
-				if event.event_id not in user.notify_events:
-					keyboard[0].append(InlineKeyboardButton(BUTTON_NAMINGS.notify,
-						callback_data=f'setup_notification enable {day} {time}'))
-				else:
-					keyboard[0].append(InlineKeyboardButton(BUTTON_NAMINGS.disnotify,
-						callback_data=f'setup_notification disable {day} {time}'))
+			keyboard = events.get_event_keyboard(user, event)
+			keyboard = InlineKeyboardMarkup(keyboard)
 
-			if user.role == 'root':
-				keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
-						 				callback_data=f'event_modification change_existing_event {day} {time}'),
-								InlineKeyboardButton(BUTTON_NAMINGS.remove_event, 
-										callback_data=f'remove_event {day} {time} enquire'),
-								])
+			await context.bot.edit_message_reply_markup(chat_id=context._chat_id,
+														message_id=update.callback_query.message.id,
+														reply_markup=keyboard)
+			return
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
@@ -548,7 +551,11 @@ class Bot:
 			user.notify_events.remove(event.event_id)
 			await context.bot.answer_callback_query(update.callback_query.id, text='Напоминание отключено')
 
-		await self.main_menu(update, context, force_message=True)
+		keyboard = events.get_event_keyboard(user, event)
+		keyboard = InlineKeyboardMarkup(keyboard)
+		await context.bot.edit_message_reply_markup(chat_id=context._chat_id,
+													message_id=update.callback_query.message.id,
+													reply_markup=keyboard)
 
 
 	async def event_notification(self, context):
@@ -687,6 +694,7 @@ class Bot:
 
 		# =======================================================
 
+		user = self.connected_users[context._user_id]
 
 		if len(self.komsa) == 0:
 			await context.bot.answer_callback_query(update.callback_query.id, text="add komsa list")
@@ -714,11 +722,11 @@ class Bot:
 						[InlineKeyboardButton("<", callback_data=f'call_komsa show {prev_komsa_id}'),
 						 InlineKeyboardButton(">", callback_data=f'call_komsa show {next_komsa_id}')]]
 
-			if not bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
-				if datetime.datetime.now() >= self.call_komsa_cooldown[context._user_id]:
-
-					# add description for call
-					keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.call_komsa, callback_data=f'user_confirm_komsa_call default {komsa_id}')])
+			if user.role == 'user':
+				if not bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
+					if datetime.datetime.now() >= self.call_komsa_cooldown[context._user_id]:
+						keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.call_komsa,
+															  callback_data=f'user_confirm_komsa_call default {komsa_id}')])
 
 			await print_komsa_description(context, self.komsa[komsa_id], reply_markup=InlineKeyboardMarkup(keyboard))
 

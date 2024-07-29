@@ -6,6 +6,8 @@ import pickle
 import hashlib
 
 from datetime import datetime
+from telegram import InlineKeyboardButton
+from constants import BUTTON_NAMINGS
 
 
 class Event:
@@ -54,4 +56,34 @@ def read_event_data_from_user(update, context) -> tuple[str, str]:
 	name = update.message.text
 
 	return name, ''
+
+
+def get_event_keyboard(user, event):
+	day, time = event.string_date(), event.string_time()
+
+	keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu force_message')]]
+
+	if user.notifications_flag:
+		if event.event_id not in user.notify_events:
+			keyboard[0].append(InlineKeyboardButton(BUTTON_NAMINGS.notify,
+				callback_data=f'setup_notification enable {day} {time}'))
+		else:
+			keyboard[0].append(InlineKeyboardButton(BUTTON_NAMINGS.disnotify,
+				callback_data=f'setup_notification disable {day} {time}'))
+
+	if user.role == 'root':
+		keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.modify_event,
+				 				callback_data=f'event_modification change_existing_event {day} {time}'),
+						InlineKeyboardButton(BUTTON_NAMINGS.remove_event,
+								callback_data=f'remove_event {day} {time} enquire'),
+						])
+
+		if event.hidden:
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.reveal_event,
+												  callback_data=f"get_events reveal {day} {time}")])
+		else:
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.hide_event,
+												  callback_data=f"get_events hide {day} {time}")])
+
+	return keyboard
 

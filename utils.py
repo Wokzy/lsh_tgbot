@@ -147,15 +147,15 @@ def load_events(event_object) -> dict:
 	return events, event_mapping
 
 
-def load_komsa_list(user_instance) -> dict:
+def load_komsa_list() -> dict:
 	if KOMSA_LIST_FNAME not in os.listdir():
 		return {}
 
 	with open(KOMSA_LIST_FNAME, 'rb') as f:
 		komsa_list = pickle.load(f)
 
-	for key in komsa_list.keys():
-		komsa_list[key] = update_object_instance(komsa_list[key], user_instance)
+	# for key in komsa_list.keys():
+	# 	komsa_list[key] = update_object_instance(komsa_list[key], user_instance)
 
 	return komsa_list
 
