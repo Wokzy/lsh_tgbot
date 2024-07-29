@@ -722,7 +722,7 @@ class Bot:
 						[InlineKeyboardButton("<", callback_data=f'call_komsa show {prev_komsa_id}'),
 						 InlineKeyboardButton(">", callback_data=f'call_komsa show {next_komsa_id}')]]
 
-			if user.role == 'user':
+			if user.role == 'user' and CONFIG['ALLOW_INVITATIONS']:
 				if not bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
 					if datetime.datetime.now() >= self.call_komsa_cooldown[context._user_id]:
 						keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.call_komsa,
