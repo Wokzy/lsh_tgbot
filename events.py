@@ -6,7 +6,6 @@ import pickle
 import hashlib
 
 from datetime import datetime
-from constants import EVENTS_DIR, IMAGES_DIR, EVENTS_FNAME#, TOTAL_DAYS_WITH_EVENTS
 
 
 class Event:
@@ -16,6 +15,8 @@ class Event:
 		self.datetime = date
 		self.picture_file_id = picture_file_id
 		self.description = description
+
+		self.hidden = False
 
 		self.event_id = random.randint(1, 1<<64)
 
@@ -45,28 +46,6 @@ class Event:
 			await context.bot.send_photo(context._chat_id, caption=text, parse_mode="Markdown", photo=photo, reply_markup=reply_markup)
 		else:
 			await context.bot.send_message(context._chat_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
-
-
-def load_events() -> dict:
-	file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
-	if not os.path.exists(file_path):
-		return {}, {}
-
-	with open(file_path, 'rb') as f:
-		events = pickle.load(f)
-		event_mapping = pickle.load(f)
-		f.close()
-
-	return events, event_mapping
-
-
-def save_events(events:dict, event_mapping:dict) -> None:
-	file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
-
-	with open(file_path, 'wb') as f:
-		pickle.dump(events, f)
-		pickle.dump(event_mapping, f)
-		f.close()
 
 
 def read_event_data_from_user(update, context) -> tuple[str, str]:

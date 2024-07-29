@@ -40,9 +40,11 @@ from constants import (
 
 from utils import (
 	clr,
-	read_config,
 	save_photo,
 	load_photo,
+	save_events,
+	load_events,
+	read_config,
 	load_komsa_list,
 	save_komsa_list,
 	load_static_data,
@@ -134,11 +136,12 @@ class Bot:
 			self.pending_call_requests = {'request_id':bot_functions.CallKomsaRequest}
 		"""
 
-		self.static_data = load_static_data()
+		self.static_data = load_static_data(objects_map={'connected_users':BotUser(),
+											"pending_call_requests":bot_functions.CallKomsaRequest()})
 		self.connected_users = self.static_data.get('connected_users', {})
-		self.current_events, self.event_mapping = events.load_events()
+		self.current_events, self.event_mapping = load_events(event_object=events.Event())
 
-		self.komsa = load_komsa_list()
+		self.komsa = load_komsa_list(user_instance=BotUser())
 		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {}) if "--no-call-requests" not in sys.argv else {}
 		self.pending_call_requests = self.static_data.get('pending_call_requests', {}) if "--no-call-requests" not in sys.argv else {}
 
@@ -150,7 +153,7 @@ class Bot:
 		self.static_data['call_komsa_cooldown'] = self.call_komsa_cooldown
 		self.static_data['pending_call_requests'] = self.pending_call_requests
 
-		events.save_events(self.current_events, self.event_mapping)
+		save_events(self.event_mapping)
 		save_static_data(self.static_data)
 		save_komsa_list(self.komsa)
 		print(f'{clr.green}saved{clr.yellow}')
@@ -360,7 +363,7 @@ class Bot:
 			await context.bot.answer_callback_query(update.callback_query.id)
 		elif status == 'confirm':
 			del self.current_events[day][time]
-			events.save_events(self.current_events, self.event_mapping)
+			save_events(self.event_mapping)
 			await context.bot.answer_callback_query(update.callback_query.id, text = "Мероприятие было удалено")
 			await self.main_menu(update, context)
 		elif status == 'decline':
@@ -430,7 +433,7 @@ class Bot:
 
 		self.current_events[user.modified_event.string_date()][user.modified_event.string_time()] = user.modified_event
 		self.event_mapping[user.modified_event.event_id] = user.modified_event
-		events.save_events(self.current_events, self.event_mapping)
+		save_events(self.event_mapping)
 
 		print(f"Event was saved by {context._user_id}")
 

@@ -18,7 +18,7 @@ CONFIG = utils.read_config()
 
 
 class CallKomsaRequest:
-	def __init__(self, sender_id:int, reciever_id:int, description:str):
+	def __init__(self, sender_id:int = 0, reciever_id:int = 0, description:str = ""):
 		self.request_id = random.randint(1, 1<<64)
 
 		self.sender_id = sender_id
@@ -28,7 +28,7 @@ class CallKomsaRequest:
 		self.creation_date = datetime.datetime.now()
 
 		self.confirmed_by_user  = False
-		self.confirmed_by_tutor = True  # debug mode
+		self.confirmed_by_tutor = False
 		self._filally_confirmed = False
 
 
