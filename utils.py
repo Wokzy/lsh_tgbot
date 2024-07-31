@@ -101,18 +101,30 @@ def load_static_data(objects_map) -> dict:
 	with open(STATIC_DATA_FNAME, 'rb') as f:
 		static_data = pickle.load(f)
 
-	for key, obj in objects_map.items():
-		if key not in static_data.keys():
-			continue
+	for key in static_data['connected_users'].keys():
+		new_instance = objects_map['connected_users'](role=static_data['connected_users'][key].role,
+													 user_id=static_data['connected_users'][key].user_id,
+													 chat_id=static_data['connected_users'][key].chat_id,
+													 auth_data=static_data['connected_users'][key].auth_data,
+													 notifications_flag=static_data['connected_users'][key].notifications_flag,
+													 notify_events=static_data['connected_users'][key].notify_events,
+														)
 
-		if isinstance(static_data[key], list):
-			for i in range(len(static_data[key])):
-				static_data[key][i] = update_object_instance(static_data[key][i], obj)
-		elif isinstance(static_data[key], dict):
-			for i in static_data[key]:
-				static_data[key][i] = update_object_instance(static_data[key][i], obj)
-		else:
-			static_data[key] = update_object_instance(static_data[key], obj)
+		static_data['connected_users'][key] = new_instance
+
+
+	# for key, obj in objects_map.items():
+	# 	if key not in static_data.keys():
+	# 		continue
+
+	# 	if isinstance(static_data[key], list):
+	# 		for i in range(len(static_data[key])):
+	# 			static_data[key][i] = update_object_instance(static_data[key][i], obj)
+	# 	elif isinstance(static_data[key], dict):
+	# 		for i in static_data[key]:
+	# 			static_data[key][i] = update_object_instance(static_data[key][i], obj)
+	# 	else:
+	# 		static_data[key] = update_object_instance(static_data[key], obj)
 
 	return static_data
 
@@ -126,16 +138,16 @@ def load_events(event_object) -> dict:
 		#events = pickle.load(f) # DEPRECATED
 		event_mapping = pickle.load(f)
 
-	_delete = []
-	for event_id in event_mapping.keys():
-		if event_mapping[event_id].datetime.month != 8:
-			_delete.append(event_id)
-			continue
+	# _delete = []
+	# for event_id in event_mapping.keys():
+	# 	if event_mapping[event_id].datetime.month != 8:
+	# 		_delete.append(event_id)
+	# 		continue
 
-		event_mapping[event_id] = update_object_instance(event_mapping[event_id], event_object)
+	# 	event_mapping[event_id] = update_object_instance(event_mapping[event_id], event_object)
 
-	for event_id in _delete:
-		del event_mapping[event_id]
+	# for event_id in _delete:
+	# 	del event_mapping[event_id]
 
 	events = {}
 	for event in event_mapping.values():

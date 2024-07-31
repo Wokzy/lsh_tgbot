@@ -61,7 +61,7 @@ CONFIG = read_config()
 
 
 class BotUser:
-	def __init__(self, role:str = "user", user_id = None, chat_id = None):
+	def __init__(self, role:str = "user", user_id = None, chat_id = None, auth_data = {}, notifications_flag=False, notify_events=set()):
 		"""
 		roles: user, tutor, root
 		"""
@@ -71,7 +71,7 @@ class BotUser:
 
 		self.role = role
 		self.current_state = None
-		self.auth_data = {}
+		self.auth_data = auth_data
 
 		# FIXME
 		#self.event_creation_data = {}
@@ -79,8 +79,8 @@ class BotUser:
 		self.modified_event_old_position = None
 
 
-		self.notifications_flag = False # Notificaitons toggle
-		self.notify_events = set()
+		self.notifications_flag = notifications_flag # Notificaitons toggle
+		self.notify_events = notify_events
 
 
 	async def print_authorization_data(self, update, context, reply_markup=None) -> None:
@@ -138,7 +138,7 @@ class Bot:
 			self.pending_call_requests = {'request_id':bot_functions.CallKomsaRequest}
 		"""
 
-		self.static_data = load_static_data(objects_map={'connected_users':BotUser(),
+		self.static_data = load_static_data(objects_map={'connected_users':BotUser,
 											"pending_call_requests":bot_functions.CallKomsaRequest()})
 		self.connected_users = self.static_data.get('connected_users', {})
 		self.current_events, self.event_mapping = load_events(event_object=events.Event())
