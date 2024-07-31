@@ -179,12 +179,20 @@ def save_komsa_list(data:dict) -> None:
 		pickle.dump(data, f)
 
 
-async def print_komsa_description(context, description:dict, reply_markup=None):
+async def print_komsa_description(context, description:dict, user, reply_markup=None):
+
+	name = user.auth_data.get('name', '')
+	surname = user.auth_data.get('surname', '')
+	text = f"<b>{name} {surname}</b>\n\n{description['description']}"
 
 	if description['photo'] is not None:
 		await context.bot.send_photo(context._chat_id,
 									 photo=await load_photo(context, description['photo']),
-									 caption=description['description'],
+									 caption=text,
+									 parse_mode="HTML",
 									 reply_markup=reply_markup)
 	else:
-		await context.bot.send_message(context._chat_id, text=description['description'], reply_markup=reply_markup)
+		await context.bot.send_message(context._chat_id,
+									   text=text,
+									   parse_mode="HTML",
+									   reply_markup=reply_markup)

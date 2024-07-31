@@ -1,5 +1,6 @@
 
 import os
+import copy
 import utils
 import events
 import random
@@ -11,6 +12,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from constants import (
 	BUTTON_NAMINGS,
 	MISC_MESSAGES,
+	AUTH_DATA_FNAME,
 	)
 
 
@@ -126,8 +128,28 @@ async def handle_event_modification_callback_query(bot, update, context) -> str:
 
 
 def match_auth_data(data:dict) -> bool:
-	""" TODO """
-	return True
+	""" Checks users auth data to be valid (do not saves from doubling) """
+
+	# if AUTH_DATA_FNAME not in os.listdir():
+	# 	return True
+
+	with open(AUTH_DATA_FNAME, 'r') as f:
+		for line in f:
+			line_split = line.split(' ')
+			line_split[-1] = line_split[-1].strip()
+			if len(line_split) == 3:
+				surname, name, grade = line_split
+			elif len(line_split) == 4:
+				surname, name, _, grade = line_split
+			elif len(line_split) == 5:
+				surname = line_split[0]
+				name = line_split[1] + line_split[2]
+				grade = line_split[4]
+
+			if name == data['name'] and surname == data['surname'] and grade == data['grade']:
+				return True
+
+	return False
 
 
 async def authorize_user(user, update, context) -> bool:

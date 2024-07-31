@@ -85,11 +85,13 @@ class BotUser:
 
 	async def print_authorization_data(self, update, context, reply_markup=None) -> None:
 
+		text = "Информация о вас пока что отстутствует"
+
 		if self.auth_data:
 			text = 'Информация о вас:\n\n' + \
 				  f'Роль: {ROLE_MAPPING[self.role]}\n' + \
-				  f'Класс: {self.auth_data["grade"]}\n' + \
-				  f'Имя Фамилия: {self.auth_data["name"]} {self.auth_data["surname"]}'
+				  f'Класс: {self.auth_data.get("grade", "Unknown")}\n' + \
+				  f'Имя Фамилия: {self.auth_data.get("name", "NoName")} {self.auth_data.get("surname", "NoSurname")}'
 
 		await context.bot.send_message(context._chat_id, text=text, reply_markup=reply_markup)
 
@@ -181,6 +183,19 @@ class Bot:
 		print(f'{clr.yellow}Refreshed')
 
 
+	async def user_count(self, update, context):
+		if context._user_id not in self.connected_users:
+			return
+
+		user = self.connected_users[context._user_id]
+		if user.role != 'root':
+			return
+
+		res = f'Total amount of unique users: {len(self.connected_users.keys())}'
+
+		await context.bot.send_message(context._chat_id, text=res)
+
+
 	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 		if update.message is None:
 			return
@@ -246,7 +261,7 @@ class Bot:
 				await self.canteen_menu(update, context)
 			elif user.current_state == 'update_komsa_description':
 				await self.update_komsa_description(update, context)
-			elif 'call_komsa_description' in user.current_state:
+			elif user.current_state is not None and 'call_komsa_description' in user.current_state:
 				await self.user_confirm_komsa_call(update, context)
 
 		if answer_text is not None:
@@ -580,7 +595,7 @@ class Bot:
 			user.current_state = 'update_komsa_description'
 
 			if user.user_id in self.komsa.keys():
-				await print_komsa_description(context, self.komsa[user.user_id])
+				await print_komsa_description(context, self.komsa[user.user_id], user)
 
 			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['update_komsa_description'], reply_markup=keyboard)
 			await context.bot.answer_callback_query(update.callback_query.id)
@@ -728,7 +743,10 @@ class Bot:
 						keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.call_komsa,
 															  callback_data=f'user_confirm_komsa_call default {komsa_id}')])
 
-			await print_komsa_description(context, self.komsa[komsa_id], reply_markup=InlineKeyboardMarkup(keyboard))
+			await print_komsa_description(context,
+										  self.komsa[komsa_id],
+										  user=self.connected_users[komsa_id],
+										  reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 	async def confirm_call_from_tutor(self, update, context):
@@ -789,9 +807,12 @@ def main():
 	bot = Bot()
 
 	application = Application.builder().token(config['BOT_TOKEN']).read_timeout(7).get_updates_read_timeout(42).build()
+
 	application.add_handler(CommandHandler("start", bot.start_session))
 	application.add_handler(CommandHandler("refresh", bot.refresh))
 	application.add_handler(CommandHandler("save_all", bot.async_save))
+	application.add_handler(CommandHandler("user_count", bot.user_count))
+
 	application.add_handler(MessageHandler(filters.PHOTO, bot.handle_message))
 	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
 

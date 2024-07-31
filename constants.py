@@ -10,6 +10,8 @@ EVENTS_FNAME = 'events_data.bin'
 KOMSA_LIST_FNAME = 'komsa.bin'
 STATIC_DATA_FNAME = 'static_data.bin'
 
+AUTH_DATA_FNAME = 'auth_data.txt' # put there info in format {name} {surname} {patronymic} {grade} per line
+
 TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
 
 TIMEZONE = pytz.timezone('Asia/Novosibirsk')
