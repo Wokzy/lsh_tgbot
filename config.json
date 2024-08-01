@@ -3,4 +3,5 @@
 	"ROOT_USERS":[],
 	"ROOT_PASSWORD":"",
 	"TUTOR_PASSWORD":"",
+	"ALLOW_INVITATIONS":false
 }

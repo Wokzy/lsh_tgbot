@@ -1,13 +1,88 @@
 
 import os
+import copy
 import utils
 import events
+import random
 import pickle
+import datetime
 
-from utils import read_config
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+from constants import (
+	BUTTON_NAMINGS,
+	MISC_MESSAGES,
+	AUTH_DATA_FNAME,
+	)
 
 
-CONFIG = read_config()
+CONFIG = utils.read_config()
+
+
+class CallKomsaRequest:
+	def __init__(self, sender_id:int = 0, reciever_id:int = 0, description:str = ""):
+		self.request_id = random.randint(1, 1<<64)
+
+		self.sender_id = sender_id
+		self.reciever_id = reciever_id
+		self.description = description
+
+		self.creation_date = datetime.datetime.now()
+
+		self.confirmed_by_user  = False
+		self.confirmed_by_tutor = False
+		self._filally_confirmed = False
+
+
+def check_call_request_sender(lst:dict[int, CallKomsaRequest], sender_id:int) -> int:
+	for request_id, request in lst.items():
+		if request.sender_id == sender_id:
+			return request_id
+
+	return 0
+
+
+async def send_confirm_call_message_to_root(users:dict, request:CallKomsaRequest, context) -> None:
+	sender_data = users[request.sender_id].auth_data
+	root = users[request.reciever_id]
+
+	text = f'Вас вызывает {sender_data["name"]} {sender_data["surname"]}\n\n' + \
+		   f'со следующим описанием:\n\n{request.description}'
+
+	keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.accept_call_root, callback_data=f"confirm_call_from_root confirm {request.request_id}"),
+				 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_root, callback_data=f"confirm_call_from_root decline {request.request_id}")]]
+
+	keyboard = InlineKeyboardMarkup(keyboard)
+
+	await context.bot.send_message(root.chat_id, text=text, reply_markup=keyboard)
+
+
+async def send_confirm_call_message_to_tutor(users:dict, request:CallKomsaRequest, context) -> None:
+
+	keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.allow_call_tutor, callback_data=f"confirm_call_from_tutor confirm {request.request_id}"),
+				 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_tutor, callback_data=f"confirm_call_from_tutor decline {request.request_id}")]]
+
+	keyboard = InlineKeyboardMarkup(keyboard)
+	sender = users[request.sender_id]
+	root = users[request.reciever_id]
+
+	text = f'Ученик {sender.auth_data["name"]} {sender.auth_data["surname"]} хочет вызвать к себе комсёнка ' + \
+		   f'{root.auth_data["name"]} {root.auth_data["surname"]}. Разрешаете ли вы ему это сделать?\n' + \
+		   f'Ученик так же прикрепил описание:\n\n{request.description}'
+
+	for user in users.values():
+		if not user.auth_data or user.role != 'tutor':
+			continue
+
+		if user.auth_data["grade"] != sender.auth_data["grade"]:
+			continue
+
+		await context.bot.send_message(user.chat_id, text=text, reply_markup=keyboard)
+		request.confirmed_by_tutor = False
+
+	if request.confirmed_by_tutor:
+		await send_confirm_call_message_to_root(users, request, context)
+
 
 
 async def handle_event_modification_callback_query(bot, update, context) -> str:
@@ -53,8 +128,28 @@ async def handle_event_modification_callback_query(bot, update, context) -> str:
 
 
 def match_auth_data(data:dict) -> bool:
-	""" TODO """
-	return True
+	""" Checks users auth data to be valid (do not saves from doubling) """
+
+	# if AUTH_DATA_FNAME not in os.listdir():
+	# 	return True
+
+	with open(AUTH_DATA_FNAME, 'r') as f:
+		for line in f:
+			line_split = line.split(' ')
+			line_split[-1] = line_split[-1].strip()
+			if len(line_split) == 3:
+				surname, name, grade = line_split
+			elif len(line_split) == 4:
+				surname, name, _, grade = line_split
+			elif len(line_split) == 5:
+				surname = line_split[0]
+				name = line_split[1] + line_split[2]
+				grade = line_split[4]
+
+			if name == data['name'] and surname == data['surname'] and grade == data['grade']:
+				return True
+
+	return False
 
 
 async def authorize_user(user, update, context) -> bool:
@@ -74,8 +169,8 @@ async def authorize_user(user, update, context) -> bool:
 
 	auth_data = {
 				'grade':data[0],
-				'name':data[1],
-				'surname':data[2]}
+				'name':data[1].title(),
+				'surname':data[2].title()}
 
 	if len(data) == 4:
 		if data[3] == CONFIG["TUTOR_PASSWORD"]:
