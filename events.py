@@ -11,20 +11,37 @@ from constants import BUTTON_NAMINGS
 
 
 class Event:
-	def __init__(self, name:str = 'None', date:datetime = datetime.now().replace(month=8), 
-						description:str = 'None', picture_file_id:str = None):
+	def __init__(self, name:str = 'None', date = datetime.now().replace(month=8), 
+						description:str = 'None', picture_file_id:str = None, hidden:bool = False,
+						event_id:int = random.randint(1, 1<<64)):
 		self.name = name
-		self.datetime = date
 		self.picture_file_id = picture_file_id
 		self.description = description
 
-		self.hidden = False
+		if isinstance(date, float):
+			self.datetime = datetime.fromtimestamp(date)
+		else:
+			self.datetime = date
 
-		self.event_id = random.randint(1, 1<<64)
+		self.hidden = bool(hidden)
+
+		self.event_id = int(event_id)
 
 
 	def __eq__(self, another) -> bool:
 		return self.event_id == another.event_id
+
+
+	def to_json(self) -> dict:
+
+		return {
+				"name":self.name,
+				"date":self.datetime.timestamp(),
+				"picture_file_id":self.picture_file_id,
+				"description":self.description,
+				"hidden":self.hidden,
+				"event_id":self.event_id
+		}
 
 
 	def string_datetime(self) -> str:

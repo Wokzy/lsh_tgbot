@@ -5,6 +5,7 @@ import os
 import copy
 import json
 import pickle
+import shutil
 
 from datetime import datetime
 from constants import (
@@ -13,7 +14,9 @@ from constants import (
 	KOMSA_LIST_FNAME,
 	STATIC_DATA_FNAME,
 	EVENTS_FNAME,
-	EVENTS_DIR
+	EVENTS_DIR,
+	USERS_FNAME,
+	EVENTS_JSON_FNAME,
 )
 
 class clr:
@@ -63,13 +66,14 @@ async def save_photo(context, picture) -> str:
 async def load_photo(context, file_id):
 	""" Prepare photo instance to be sent by bot.send_photo method """
 
-	photo = await context.bot.getFile(file_id)
-	if not photo:
-		photo = open(os.path.join(IMAGES_DIR, file_id), 'rb')
-	else:
+	try:
+		photo = await context.bot.getFile(file_id)
 		if file_id not in os.listdir(IMAGES_DIR):
 			await save_photo(context, file_id)
 		photo = file_id
+	except Exception as e:
+		print(e)
+		photo = open(os.path.join(IMAGES_DIR, file_id), 'rb')
 
 	return photo
 
@@ -94,23 +98,12 @@ def update_object_instance(instance, obj):
 	return new_instance
 
 
-def load_static_data(objects_map) -> dict:
+def load_static_data() -> dict:
 	if STATIC_DATA_FNAME not in os.listdir():
 		return {}
 
 	with open(STATIC_DATA_FNAME, 'rb') as f:
 		static_data = pickle.load(f)
-
-	for key in static_data['connected_users'].keys():
-		new_instance = objects_map['connected_users'](role=static_data['connected_users'][key].role,
-													 user_id=static_data['connected_users'][key].user_id,
-													 chat_id=static_data['connected_users'][key].chat_id,
-													 auth_data=static_data['connected_users'][key].auth_data,
-													 notifications_flag=static_data['connected_users'][key].notifications_flag,
-													 notify_events=static_data['connected_users'][key].notify_events,
-														)
-
-		static_data['connected_users'][key] = new_instance
 
 
 	# for key, obj in objects_map.items():
@@ -130,13 +123,17 @@ def load_static_data(objects_map) -> dict:
 
 
 def load_events(event_object) -> dict:
-	file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
+	# file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
+	file_path = os.path.join(EVENTS_DIR, EVENTS_JSON_FNAME)
 	if not os.path.exists(file_path):
 		return {}, {}
 
-	with open(file_path, 'rb') as f:
-		#events = pickle.load(f) # DEPRECATED
-		event_mapping = pickle.load(f)
+	with open(file_path, 'r') as f:
+		# events = pickle.load(f) # DEPRECATED
+		event_mapping = json.load(f)
+		# event_mapping = pickle.load(f)
+
+	event_mapping = {int(key):event_object(**value) for key, value in event_mapping.items()}
 
 	# _delete = []
 	# for event_id in event_mapping.keys():
@@ -172,23 +169,46 @@ def load_komsa_list() -> dict:
 	return komsa_list
 
 
-def save_events(events:dict) -> None:
-	file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
+def load_users(user_obj) -> dict:
 
-	with open(file_path, 'wb') as f:
-		pickle.dump(events, f)
+	with open(USERS_FNAME, 'r') as f:
+		users = json.load(f)
+
+	return {user['user_id']:user_obj(**user) for user in users}
+
+
+def save_events(events:dict) -> None:
+	# file_path = os.path.join(EVENTS_DIR, EVENTS_FNAME)
+	file_path = os.path.join(EVENTS_DIR, EVENTS_JSON_FNAME)
+
+	out = {key:value.to_json() for key, value in events.items()}
+	with open(file_path, 'w') as f:
+		json.dump(out, f)
 
 
 def save_static_data(data:dict) -> None:
 	print('saving static data')
 
+	shutil.copyfile(STATIC_DATA_FNAME, f'_backups/{STATIC_DATA_FNAME}_{int(datetime.now().timestamp())}.bin')
+
 	with open(STATIC_DATA_FNAME, 'wb') as f:
-		pickle.dump(data, f)
+		try:
+			pickle.dump(data, f)
+		except:
+			print(data)
 
 
 def save_komsa_list(data:dict) -> None:
 	with open(KOMSA_LIST_FNAME, 'wb') as f:
 		pickle.dump(data, f)
+
+
+def save_users(users:list) -> None:
+
+	out = [user.to_json() for user in users]
+	with open(USERS_FNAME, 'w') as f:
+		json.dump(out, f)
+
 
 
 async def print_komsa_description(context, description:dict, user, reply_markup=None):

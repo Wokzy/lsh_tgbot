@@ -49,6 +49,8 @@ from utils import (
 	save_komsa_list,
 	load_static_data,
 	save_static_data,
+	save_users,
+	load_users,
 	print_komsa_description,
 )
 
@@ -61,7 +63,7 @@ CONFIG = read_config()
 
 
 class BotUser:
-	def __init__(self, role:str = "user", user_id = None, chat_id = None, auth_data = {}, notifications_flag=False, notify_events=set()):
+	def __init__(self, role:str = "user", user_id = 0, chat_id = 0, auth_data = {}, notifications_flag=False, notify_events=set()):
 		"""
 		roles: user, tutor, root
 		"""
@@ -80,7 +82,19 @@ class BotUser:
 
 
 		self.notifications_flag = notifications_flag # Notificaitons toggle
-		self.notify_events = notify_events
+		self.notify_events = set(notify_events)
+
+
+	def to_json(self) -> dict:
+		""" Converts current class to json """
+		return {
+				'role':self.role,
+				'user_id':self.user_id,
+				'chat_id':self.chat_id,
+				'auth_data':self.auth_data,
+				'notifications_flag':self.notifications_flag,
+				'notify_events':list(self.notify_events)
+				}
 
 
 	async def print_authorization_data(self, update, context, reply_markup=None) -> None:
@@ -111,14 +125,13 @@ class BotUser:
 							name=job_name)
 
 
-	def setup_event_notifications(self, context, event_modification):
+	def setup_event_notifications(self, context, event_notification):
 		context.job_queue.run_repeating(
-			callback=event_modification,
+			callback=event_notification,
 			interval=60*15, # 15 minutes
 			name=f"{self.user_id}",
 			chat_id=self.chat_id,
 			user_id=self.user_id,
-			first=1
 			)
 
 
@@ -138,10 +151,9 @@ class Bot:
 			self.pending_call_requests = {'request_id':bot_functions.CallKomsaRequest}
 		"""
 
-		self.static_data = load_static_data(objects_map={'connected_users':BotUser,
-											"pending_call_requests":bot_functions.CallKomsaRequest()})
-		self.connected_users = self.static_data.get('connected_users', {})
-		self.current_events, self.event_mapping = load_events(event_object=events.Event())
+		self.static_data = load_static_data()
+		self.connected_users = load_users(BotUser)
+		self.current_events, self.event_mapping = load_events(event_object=events.Event)
 
 		self.komsa = load_komsa_list()
 		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {}) if "--no-call-requests" not in sys.argv else {}
@@ -151,11 +163,12 @@ class Bot:
 
 
 	def save_all_data(self) -> None:
-		self.static_data['connected_users'] = self.connected_users
+		# self.static_data['connected_users'] = self.connected_users
 		self.static_data['call_komsa_cooldown'] = self.call_komsa_cooldown
 		self.static_data['pending_call_requests'] = self.pending_call_requests
 
 		save_events(self.event_mapping)
+		save_users(list(self.connected_users.values()))
 		save_static_data(self.static_data)
 		save_komsa_list(self.komsa)
 		print(f'{clr.green}saved{clr.yellow}')
@@ -181,6 +194,7 @@ class Bot:
 		self.__refreshed = True
 		print(context.job_queue.jobs())
 		print(f'{clr.yellow}Refreshed')
+		print(f'\n\n{self.event_mapping.keys()}\n\n')
 
 
 	async def user_count(self, update, context):
@@ -226,14 +240,14 @@ class Bot:
 		if message['photo'] is None:
 			await context.bot.send_message(context._chat_id,
 										   text=message['text'],
-										   parse_mode="Markdown",
+										   parse_mode="HTML",
 										   reply_markup=reply_markup)
 		else:
 			message['photo'] = await load_photo(context, message['photo'])
 			await context.bot.send_photo(context._chat_id,
 										 caption=message['text'],
 										 photo=message['photo'],
-										 parse_mode="Markdown",
+										 parse_mode="HTML",
 										 reply_markup=reply_markup)
 
 
@@ -282,8 +296,7 @@ class Bot:
 		self.connected_users[context._user_id].current_state = None
 		self.connected_users[context._user_id].modified_event = None
 
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')], 
-					[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data='get_events')],
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data='get_events')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data='canteen_menu')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.user_settings, callback_data='user_settings default')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.faq, callback_data='faq default')],
@@ -296,10 +309,12 @@ class Bot:
 		if not self.connected_users[context._user_id].auth_data and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
+		if context._user_id in CONFIG['ROOT_USERS']:
+			keyboard.insert(0, [InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
-		response_text = 'Welcome!'
+		response_text = MISC_MESSAGES['main_menu']
 
 		if update.callback_query is not None:
 			force_message = force_message or 'force_message' in update.callback_query.data
@@ -380,7 +395,9 @@ class Bot:
 											reply_markup = keyboard)
 			await context.bot.answer_callback_query(update.callback_query.id)
 		elif status == 'confirm':
+			event = self.current_events[day][time]
 			del self.current_events[day][time]
+			del self.event_mapping[event.event_id]
 			save_events(self.event_mapping)
 			await context.bot.answer_callback_query(update.callback_query.id, text = "Мероприятие было удалено")
 			await self.main_menu(update, context)
@@ -531,6 +548,7 @@ class Bot:
 			if update.message.text is not None:
 				self.static_data['canteen_menu'] = update.message.text
 				await context.bot.send_message(context._chat_id,
+											   parse_mode='HTML',
 											   text=MISC_MESSAGES['canteen_menu_chaged'],
 											   reply_markup=keyboard)
 
@@ -539,13 +557,19 @@ class Bot:
 
 
 		if self.connected_users[context._user_id].role == 'root':
-			await context.bot.send_message(context._chat_id, text=menu)
+			await context.bot.send_message(context._chat_id,
+										   parse_mode='HTML',
+										   text=menu)
 			self.connected_users[context._user_id].current_state = "edit_canteen_menu"
 			await context.bot.send_message(context._chat_id,
+										   parse_mode='HTML',
 										   text=MISC_MESSAGES['edit_canteen_menu'],
 										   reply_markup=keyboard)
 		else:
-			await context.bot.send_message(context._chat_id, text=menu, reply_markup=keyboard)
+			await context.bot.send_message(context._chat_id,
+										   text=menu,
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
 
 		await context.bot.answer_callback_query(update.callback_query.id)
 
@@ -577,6 +601,10 @@ class Bot:
 		""" Check all notifications and notify """
 
 		user = self.connected_users[context._user_id]
+
+		if len(user.notify_events) > 0:
+			print(f'event_notification checking {context._user_id}')
+
 		for event_id in list(user.notify_events):
 			event = self.event_mapping[event_id]
 			if DEBUG_MODE or (event.datetime - datetime.datetime.now()).total_seconds() < 3600:
@@ -630,7 +658,9 @@ class Bot:
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 		await context.bot.answer_callback_query(update.callback_query.id)
-		await update.callback_query.edit_message_text(text=response_text, reply_markup=keyboard)
+		await update.callback_query.edit_message_text(text=response_text,
+													  parse_mode='HTML',
+													  reply_markup=keyboard)
 
 
 	async def order_song_for_disco(self, update, context):
@@ -700,6 +730,8 @@ class Bot:
 		for key, request in self.pending_call_requests.items():
 			try:
 				if (datetime.datetime.now() - request.creation_date) > KOMSA_CALL_REQUEST_EXPIRATION_TIME:
+					_delete.append(key)
+				elif request._filally_confirmed:
 					_delete.append(key)
 			except AttributeError:
 				_delete.append(key)
