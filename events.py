@@ -57,14 +57,23 @@ class Event:
 	async def print_event(self, update, context, reply_markup = None) -> str:
 		# TODO
 
-		text = f"*{self.string_datetime()}*\n\n*{self.name}*\n\n{self.description}"
+		text = f"<b>{self.string_datetime()}</b>\n\n<b>{self.name}</b>\n\n{self.description}"
 
 		if self.picture_file_id is not None:
 
 			photo = await utils.load_photo(context, self.picture_file_id)
-			await context.bot.send_photo(context._chat_id, caption=text, parse_mode="Markdown", photo=photo, reply_markup=reply_markup)
+			output = await utils.send_photo(context,
+										   caption=text,
+										   photo=photo,
+										   reply_markup=reply_markup)
+
+			if isinstance(output, str):
+				self.picture_file_id = output
 		else:
-			await context.bot.send_message(context._chat_id, text=text, parse_mode="Markdown", reply_markup=reply_markup)
+			await context.bot.send_message(context._chat_id,
+										   text=text,
+										   parse_mode="HTML",
+										   reply_markup=reply_markup)
 
 
 def read_event_data_from_user(update, context) -> tuple[str, str]:

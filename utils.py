@@ -78,6 +78,21 @@ async def load_photo(context, file_id):
 	return photo
 
 
+async def send_photo(context, photo, caption, chat_id=None, reply_markup=None):
+	if chat_id is None:
+		chat_id = context._chat_id
+	message = await context.bot.send_photo(chat_id,
+										   caption=caption,
+										   photo=photo,
+										   parse_mode="HTML",
+										   reply_markup=reply_markup)
+
+	if not isinstance(photo, str):
+		return await save_photo(context, message.photo[-1])
+
+	return
+
+
 
 def update_object_instance(instance, obj):
 	""" 
@@ -170,6 +185,8 @@ def load_komsa_list() -> dict:
 
 
 def load_users(user_obj) -> dict:
+	if USERS_FNAME not in os.listdir():
+		return {}
 
 	with open(USERS_FNAME, 'r') as f:
 		users = json.load(f)
@@ -189,13 +206,14 @@ def save_events(events:dict) -> None:
 def save_static_data(data:dict) -> None:
 	print('saving static data')
 
-	shutil.copyfile(STATIC_DATA_FNAME, f'_backups/{STATIC_DATA_FNAME}_{int(datetime.now().timestamp())}.bin')
+	# shutil.copyfile(STATIC_DATA_FNAME, f'_backups/{STATIC_DATA_FNAME}_{int(datetime.now().timestamp())}.bin')
 
 	with open(STATIC_DATA_FNAME, 'wb') as f:
 		try:
 			pickle.dump(data, f)
-		except:
-			print(data)
+		except Exception as e:
+			print(e)
+			# print(data)
 
 
 def save_komsa_list(data:dict) -> None:
@@ -218,13 +236,17 @@ async def print_komsa_description(context, description:dict, user, reply_markup=
 	text = f"<b>{name} {surname}</b>\n\n{description['description']}"
 
 	if description['photo'] is not None:
-		await context.bot.send_photo(context._chat_id,
-									 photo=await load_photo(context, description['photo']),
-									 caption=text,
-									 parse_mode="HTML",
-									 reply_markup=reply_markup)
+		output = await send_photo(context,
+								  photo=await load_photo(context, description['photo']),
+								  caption=text,
+								  reply_markup=reply_markup)
+
+		if isinstance(output, str):
+			description['photo'] = output
 	else:
 		await context.bot.send_message(context._chat_id,
 									   text=text,
 									   parse_mode="HTML",
 									   reply_markup=reply_markup)
+
+

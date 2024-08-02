@@ -21,7 +21,7 @@ CONFIG = utils.read_config()
 
 class CallKomsaRequest:
 	def __init__(self, sender_id:int = 0, reciever_id:int = 0, description:str = ""):
-		self.request_id = random.randint(1, 1<<64)
+		self.request_id = random.randint(1, 1<<128)
 
 		self.sender_id = sender_id
 		self.reciever_id = reciever_id
@@ -32,6 +32,20 @@ class CallKomsaRequest:
 		self.confirmed_by_user  = False
 		self.confirmed_by_tutor = False
 		self._filally_confirmed = False
+
+
+class AskQuestionRequest:
+	def __init__(self, sender_id:int = 0, question:str = "", request_id:int = random.randint(1, 1<<128)):
+		self.request_id = request_id
+
+		self.sender_id = sender_id
+		self.question = question
+		self.text = question
+
+		self.creation_date = datetime.datetime.now()
+
+		self.answer_text = '' # not used currently
+		self.answered = False
 
 
 def check_call_request_sender(lst:dict[int, CallKomsaRequest], sender_id:int) -> int:
@@ -189,3 +203,4 @@ async def authorize_user(user, update, context) -> bool:
 	await user.print_authorization_data(update, context)
 
 	return True
+

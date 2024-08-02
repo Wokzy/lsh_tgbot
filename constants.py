@@ -20,9 +20,22 @@ TIMEZONE = pytz.timezone('Asia/Novosibirsk')
 DATETIME_INPUT_FORMAT = "%H:%M %d"
 DATETIME_HUMAN_FORMAT = "час:минута день (Пример: 14:00 24)"
 
+DAILY_QUESTIONS_LIMIT = 3 # Limit of questions to be asked by each user
+
 DEBUG_MODE = '--debug' in sys.argv
 
-DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0, tzinfo=TIMEZONE)
+DAILY_NEWSLETTER_FLOOD_LIMIT = 50 # Amount of users to get newsletter per minute
+
+if DEBUG_MODE:
+	now = datetime.datetime.now()
+	DAILY_NEWSLETTER_TIME = datetime.time(now.hour,
+										  now.minute,
+										  now.second + 10,
+										  0,
+										  tzinfo=TIMEZONE)
+else:
+	DAILY_NEWSLETTER_TIME = datetime.time(6, 50, 0, 0, tzinfo=TIMEZONE)
+
 KOMSA_CALL_COOLDOWN = datetime.timedelta(days=1)
 KOMSA_CALL_REQUEST_EXPIRATION_TIME = datetime.timedelta(days=2)
 
@@ -73,6 +86,8 @@ class BUTTON_NAMINGS:
 	edit_komsa_call_description = "Изменить описание"
 	hide_event                  = "Скрыть мероприятие"
 	reveal_event                = "Раскрыть мероприятие"
+	ask_question                = "Задать вопрос комсе"
+	answer_question             = "Ответить на вопрос"
 
 
 MISC_MESSAGES = {
@@ -97,6 +112,15 @@ MISC_MESSAGES = {
 	"call_komsa_description":"Отправьте дополнительную информацию: укажите желаемое место встречи (блок), если вы хотите вызвать несколько комсят, то сколько и каких",
 	"hide_event":"Вы скрыли мероприятие от летнешкольников",
 	"reveal_event":"Теперь это мероприятие смогут увидеть летнешкольники",
+	"ask_question":"Напишите вопрос, который вы хотели бы задать <b>Комсотряду</b>\nБудте осторожны с выбором манеры общения, напомним, что вы прошли авторизацию, указав там информацию о себе)",
+	"questions_was_sent":"Ваш вопрос был отправлен комсотряду, ответ придёт вам сюда же.\nУ вас осталось ещё {} вопросов на сегодня",
+	"questions_limit_was_exceeded":"Вы <b>достигли лимита</b> вопросов на сегодня, возвращайтесь завтра утром)",
+	"asked_question":"Лшонок {} {} из класса {} задал комсе вопрос:\n\n{}",
+	"question_has_been_answered":"На этот вопрос уже ответили",
+	"answer_was_sent":"Ваш ответ был передан летнешкольнику",
+	"authorization_required":"Чтобы воспользоваться этой функцией, пожалуйста, <b>пройдите авторизацию</b>",
+	"enter_question_answer":"Введите ответ на вопрос",
+	"answered_question":"<b>Комсёнок</b> {} {} ответил вам следующее:\n\n{}"
 }
 
 ROLE_MAPPING = {

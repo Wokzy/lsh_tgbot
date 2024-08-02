@@ -1,6 +1,7 @@
 
 import sys
 import events
+import asyncio
 import datetime
 import bot_functions
 
@@ -35,6 +36,8 @@ from constants import (
 	BUTTON_NAMINGS,
 	KOMSA_CALL_COOLDOWN,
 	DAILY_NEWSLETTER_TIME,
+	DAILY_QUESTIONS_LIMIT,
+	DAILY_NEWSLETTER_FLOOD_LIMIT,
 	KOMSA_CALL_REQUEST_EXPIRATION_TIME,
 )
 
@@ -52,6 +55,7 @@ from utils import (
 	save_users,
 	load_users,
 	print_komsa_description,
+	send_photo
 )
 
 
@@ -63,7 +67,9 @@ CONFIG = read_config()
 
 
 class BotUser:
-	def __init__(self, role:str = "user", user_id = 0, chat_id = 0, auth_data = {}, notifications_flag=False, notify_events=set()):
+	def __init__(self, role:str = "user", user_id = 0, chat_id = 0,
+				 auth_data = {}, notifications_flag=False,
+				 notify_events=set(), questions_limit:int = DAILY_QUESTIONS_LIMIT):
 		"""
 		roles: user, tutor, root
 		"""
@@ -80,9 +86,10 @@ class BotUser:
 		self.modified_event = None
 		self.modified_event_old_position = None
 
-
 		self.notifications_flag = notifications_flag # Notificaitons toggle
 		self.notify_events = set(notify_events)
+
+		self.questions_limit = int(questions_limit)
 
 
 	def to_json(self) -> dict:
@@ -93,7 +100,8 @@ class BotUser:
 				'chat_id':self.chat_id,
 				'auth_data':self.auth_data,
 				'notifications_flag':self.notifications_flag,
-				'notify_events':list(self.notify_events)
+				'notify_events':list(self.notify_events),
+				'questions_limit':self.questions_limit
 				}
 
 
@@ -110,19 +118,19 @@ class BotUser:
 		await context.bot.send_message(context._chat_id, text=text, reply_markup=reply_markup)
 
 
-	def setup_daily_newsletter(self, context, daily_newsletter):
-		self.notifications_flag = True
+	# def setup_daily_newsletter(self, context, daily_newsletter):
+	# 	self.notifications_flag = True
 
-		job_name = f"newsletter_{self.chat_id}_{self.user_id}"
+	# 	job_name = f"newsletter_{self.chat_id}_{self.user_id}"
 
-		if len(context.job_queue.get_jobs_by_name(job_name)) > 0:
-			return
+	# 	if len(context.job_queue.get_jobs_by_name(job_name)) > 0:
+	# 		return
 
-		context.job_queue.run_daily(daily_newsletter,
-							DAILY_NEWSLETTER_TIME,
-							chat_id=self.chat_id,
-							user_id=self.user_id,
-							name=job_name)
+	# 	context.job_queue.run_daily(daily_newsletter,
+	# 						DAILY_NEWSLETTER_TIME,
+	# 						chat_id=self.chat_id,
+	# 						user_id=self.user_id,
+	# 						name=job_name)
 
 
 	def setup_event_notifications(self, context, event_notification):
@@ -158,6 +166,9 @@ class Bot:
 		self.komsa = load_komsa_list()
 		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {}) if "--no-call-requests" not in sys.argv else {}
 		self.pending_call_requests = self.static_data.get('pending_call_requests', {}) if "--no-call-requests" not in sys.argv else {}
+		self.pending_questions = self.static_data.get('pending_questions', {})
+
+		# print(self.static_data['newsletter'], end='\n\n')
 
 		self.__refreshed = False
 
@@ -166,6 +177,7 @@ class Bot:
 		# self.static_data['connected_users'] = self.connected_users
 		self.static_data['call_komsa_cooldown'] = self.call_komsa_cooldown
 		self.static_data['pending_call_requests'] = self.pending_call_requests
+		self.static_data['pending_questions'] = self.pending_questions
 
 		save_events(self.event_mapping)
 		save_users(list(self.connected_users.values()))
@@ -185,10 +197,18 @@ class Bot:
 		if self.__refreshed or context._user_id not in CONFIG['ROOT_USERS']:
 			return
 
+		context.job_queue.run_daily(self.send_daily_newsletter,
+									DAILY_NEWSLETTER_TIME,
+									name="newsletter")
+
+		context.job_queue.run_daily(self.update_questions_limit,
+									DAILY_NEWSLETTER_TIME,
+									name='update_questions_limit')
+
 		print(f'{clr.yellow}', end='')
 		for user_id, user in self.connected_users.items():
 			if user.notifications_flag:
-				user.setup_daily_newsletter(context, self.daily_newsletter)
+				# user.setup_daily_newsletter(context, self.daily_newsletter)
 				user.setup_event_notifications(context, self.event_notification)
 
 		self.__refreshed = True
@@ -220,7 +240,7 @@ class Bot:
 			print(f'{clr.yellow}{user.first_name} {user.last_name} {user.username} [{user.id}] Has just launched the bot')
 			self.connected_users[context._user_id] = BotUser(user_id=context._user_id, chat_id=context._chat_id)
 
-			self.connected_users[context._user_id].setup_daily_newsletter(context, self.daily_newsletter)
+			# self.connected_users[context._user_id].setup_daily_newsletter(context, self.daily_newsletter)
 			self.connected_users[context._user_id].setup_event_notifications(context, self.event_notification)
 
 		await self.main_menu(update, context)
@@ -228,8 +248,11 @@ class Bot:
 		# await context.bot.send_message(update.message.chat.id, "You've already started me")
 
 
-	async def daily_newsletter(self, context, reply_markup=None) -> None:
+	async def daily_newsletter(self, context, chat_id=None, reply_markup=None) -> None:
 		""" Newsletter """
+
+		if chat_id is None:
+			chat_id = context._chat_id
 
 		message = self.static_data.get('newsletter', {'text':'No newsletter', 'photo':None})
 
@@ -238,22 +261,46 @@ class Bot:
 
 
 		if message['photo'] is None:
-			await context.bot.send_message(context._chat_id,
+			await context.bot.send_message(chat_id,
 										   text=message['text'],
 										   parse_mode="HTML",
 										   reply_markup=reply_markup)
 		else:
 			message['photo'] = await load_photo(context, message['photo'])
-			await context.bot.send_photo(context._chat_id,
-										 caption=message['text'],
-										 photo=message['photo'],
-										 parse_mode="HTML",
-										 reply_markup=reply_markup)
+			output = await send_photo(context,
+									  caption=message['text'],
+									  photo=message['photo'],
+									  reply_markup=reply_markup)
+
+			if isinstance(output, str):
+				self.static_data['newsletter']['photo'] = output
+
+
+	async def send_daily_newsletter(self, context):
+		print(f'{clr.cyan}\nSending newsletter\n{clr.yellow}')
+
+		counter = 0
+		for user in self.connected_users.values():
+			counter += 1
+			await self.daily_newsletter(context, user.chat_id)
+
+			if counter >= DAILY_NEWSLETTER_FLOOD_LIMIT:
+				counter = 0
+				await asyncio.sleep(60)
+
+		if DEBUG_MODE:
+			await asyncio.sleep(60)
 
 
 	async def authorize(self, update, context) -> bool:
 		user = self.connected_users[context._user_id]
 		status = await bot_functions.authorize_user(user, update, context)
+
+
+	async def update_questions_limit(self, context) -> None:
+
+		for user_id in self.connected_users.keys():
+			self.connected_users[user_id].questions_limit = DAILY_QUESTIONS_LIMIT
 
 
 	async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,6 +322,10 @@ class Bot:
 				await self.canteen_menu(update, context)
 			elif user.current_state == 'update_komsa_description':
 				await self.update_komsa_description(update, context)
+			elif user.current_state == 'ask_question':
+				await self.ask_question(update, context)
+			elif user.current_state is not None and "answering_question" in user.current_state:
+				await self.answer_question(update, context)
 			elif user.current_state is not None and 'call_komsa_description' in user.current_state:
 				await self.user_confirm_komsa_call(update, context)
 
@@ -300,7 +351,9 @@ class Bot:
 					[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data='canteen_menu')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.user_settings, callback_data='user_settings default')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.faq, callback_data='faq default')],
-					[InlineKeyboardButton(BUTTON_NAMINGS.komsa_list, callback_data='call_komsa default')]]
+					[InlineKeyboardButton(BUTTON_NAMINGS.komsa_list, callback_data='call_komsa default')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.ask_question, callback_data='ask_question')],
+					]
 
 		if self.connected_users[context._user_id].role == 'root': # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
@@ -602,14 +655,20 @@ class Bot:
 
 		user = self.connected_users[context._user_id]
 
-		if len(user.notify_events) > 0:
-			print(f'event_notification checking {context._user_id}')
+		# if len(user.notify_events) > 0:
+		# 	print(f'event_notification checking {context._user_id}')
 
+		counter = 0
 		for event_id in list(user.notify_events):
 			event = self.event_mapping[event_id]
 			if DEBUG_MODE or (event.datetime - datetime.datetime.now()).total_seconds() < 3600:
+				counter += 1
 				await user.notify(context, event)
 				user.notify_events.remove(event_id)
+
+				if counter >= DAILY_NEWSLETTER_FLOOD_LIMIT:
+					counter = 0
+					await asyncio.sleep(60)
 
 
 	async def update_komsa_description(self, update, context):
@@ -761,6 +820,8 @@ class Bot:
 			if context._user_id not in self.call_komsa_cooldown.keys():
 				self.call_komsa_cooldown[context._user_id] = datetime.datetime.now() - datetime.timedelta(days=1)
 
+			await context.bot.delete_message(context._chat_id, update.callback_query.message.id)
+
 			komsa_id = int(callback_data[1])
 			prev_komsa_id = list(self.komsa.keys())[(list(self.komsa.keys()).index(komsa_id) - 1) % len(self.komsa.keys())]
 			next_komsa_id = list(self.komsa.keys())[(list(self.komsa.keys()).index(komsa_id) + 1) % len(self.komsa.keys())]
@@ -769,7 +830,7 @@ class Bot:
 						[InlineKeyboardButton("<", callback_data=f'call_komsa show {prev_komsa_id}'),
 						 InlineKeyboardButton(">", callback_data=f'call_komsa show {next_komsa_id}')]]
 
-			if user.role == 'user' and CONFIG['ALLOW_INVITATIONS']:
+			if user.role == 'user' and user.auth_data and CONFIG['ALLOW_INVITATIONS']:
 				if not bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
 					if datetime.datetime.now() >= self.call_komsa_cooldown[context._user_id]:
 						keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.call_komsa,
@@ -804,7 +865,6 @@ class Bot:
 			del self.pending_call_requests[request_id]
 
 
-
 	async def confirm_call_from_root(self, update, context):
 		state, request_id = update.callback_query.data.split(' ')[1::]
 		request_id = int(request_id)
@@ -827,6 +887,121 @@ class Bot:
 		del self.pending_call_requests[request_id]
 		await context.bot.answer_callback_query(update.callback_query.id)
 
+
+	async def ask_question(self, update, context):
+
+		user = self.connected_users[context._user_id]
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if update.callback_query is not None:
+			await context.bot.answer_callback_query(update.callback_query.id)
+
+			if not user.auth_data:
+				await context.bot.send_message(context._chat_id,
+											   text=MISC_MESSAGES['authorization_required'],
+											   parse_mode="HTML",
+											   reply_markup=keyboard)
+				return
+
+			if user.questions_limit > 0:
+				await context.bot.send_message(context._chat_id,
+											   text=MISC_MESSAGES['ask_question'],
+											   parse_mode='HTML',
+											   reply_markup=keyboard)
+				self.connected_users[context._user_id].current_state = 'ask_question'
+			else:
+				await context.bot.send_message(context._chat_id,
+											   text=MISC_MESSAGES['questions_limit_was_exceeded'],
+											   parse_mode='HTML',
+											   reply_markup=keyboard)
+		else:
+			user.questions_limit -= 1
+
+			request = bot_functions.AskQuestionRequest(sender_id=context._user_id,
+													   question=update.message.text)
+
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['questions_was_sent'].format(user.questions_limit),
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
+
+			user.current_state = None
+
+			self.pending_questions[request.request_id] = request
+			await self.send_question_to_komsa(update, context, request.request_id)
+
+
+	async def send_question_to_komsa(self, update, context, request_id):
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.answer_question, callback_data=f'answer_question {request_id}')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		request = self.pending_questions[request_id]
+		sender = self.connected_users[request.sender_id]
+		for user_id in self.komsa.keys():
+			reciever = self.connected_users[user_id]
+
+			text = MISC_MESSAGES['asked_question'].format(sender.auth_data['name'],
+														  sender.auth_data['surname'],
+														  sender.auth_data['grade'],
+														  request.question)
+			await context.bot.send_message(reciever.chat_id,
+										   text=text,
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
+
+
+	async def answer_question(self, update, context):
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		async def _already_answered():
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['question_has_been_answered'],
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
+
+		if update.callback_query is not None:
+			await context.bot.answer_callback_query(update.callback_query.id)
+			request_id = int(update.callback_query.data.split(' ')[1])
+
+			if request_id not in self.pending_questions.keys():
+				await _already_answered()
+				return
+
+			self.connected_users[context._user_id].current_state = f"answering_question {request_id}"
+
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['enter_question_answer'],
+										   parse_mode='HTML')
+		else:
+			answerer = self.connected_users[context._user_id]
+			request_id = int(answerer.current_state.split(' ')[1])
+
+			if request_id not in self.pending_questions.keys():
+				await _already_answered()
+				return
+
+			request = self.pending_questions[request_id]
+			sender = self.connected_users[request.sender_id]
+
+			answer_text = MISC_MESSAGES['answered_question'].format(answerer.auth_data['name'],
+															   answerer.auth_data['surname'],
+															   update.message.text)
+
+			await context.bot.send_message(sender.chat_id,
+										   text=answer_text,
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
+
+			await context.bot.send_message(answerer.chat_id,
+										   text=MISC_MESSAGES['answer_was_sent'],
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
+
+			answerer.current_state = None
 
 
 
@@ -866,6 +1041,8 @@ def main():
 			bot.confirm_call_from_tutor  : "confirm_call_from_tutor",
 			bot.confirm_call_from_root   : "confirm_call_from_root",
 			bot.user_confirm_komsa_call  : "user_confirm_komsa_call",
+			bot.ask_question             : "ask_question",
+			bot.answer_question          : "answer_question"
 	}
 
 	for function, pattern in callback_handlers.items():
