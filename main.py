@@ -33,11 +33,13 @@ from constants import (
 	DEBUG_MODE,
 	ROLE_MAPPING,
 	MISC_MESSAGES,
+	FLOOD_COOLDOWN,
 	BUTTON_NAMINGS,
 	KOMSA_CALL_COOLDOWN,
 	DAILY_NEWSLETTER_TIME,
 	DAILY_QUESTIONS_LIMIT,
 	DAILY_NEWSLETTER_FLOOD_LIMIT,
+	QUESTION_REQUEST_EXPIRATION_TIME,
 	KOMSA_CALL_REQUEST_EXPIRATION_TIME,
 )
 
@@ -69,7 +71,8 @@ CONFIG = read_config()
 class BotUser:
 	def __init__(self, role:str = "user", user_id = 0, chat_id = 0,
 				 auth_data = {}, notifications_flag=False,
-				 notify_events=set(), questions_limit:int = DAILY_QUESTIONS_LIMIT):
+				 notify_events=set(), questions_limit:int = DAILY_QUESTIONS_LIMIT,
+				 banned=False):
 		"""
 		roles: user, tutor, root
 		"""
@@ -80,6 +83,7 @@ class BotUser:
 		self.role = role
 		self.current_state = None
 		self.auth_data = auth_data
+		self.banned = banned
 
 		# FIXME
 		#self.event_creation_data = {}
@@ -101,7 +105,8 @@ class BotUser:
 				'auth_data':self.auth_data,
 				'notifications_flag':self.notifications_flag,
 				'notify_events':list(self.notify_events),
-				'questions_limit':self.questions_limit
+				'questions_limit':self.questions_limit,
+				'banned':self.banned,
 				}
 
 
@@ -143,6 +148,13 @@ class BotUser:
 			)
 
 
+	def verify_auth_data(self):
+		if not self.auth_data:
+			return False
+
+		return 'name' in self.auth_data.keys() and 'surname' in self.auth_data.keys() and 'grade' in self.auth_data.keys()
+
+
 	async def notify(self, context, event) -> None:
 		print(f'{clr.green}Notification mock {self.user_id}{clr.yellow}')
 		await event.print_event(update=None, context=context)
@@ -169,6 +181,8 @@ class Bot:
 		self.pending_questions = self.static_data.get('pending_questions', {})
 
 		# print(self.static_data['newsletter'], end='\n\n')
+		if '--no-newsletter' in sys.argv:
+			self.static_data['newsletter'] = {'text':'No newsletter', 'photo':None}
 
 		self.__refreshed = False
 
@@ -212,9 +226,9 @@ class Bot:
 				user.setup_event_notifications(context, self.event_notification)
 
 		self.__refreshed = True
-		print(context.job_queue.jobs())
+		# print(context.job_queue.jobs())
 		print(f'{clr.yellow}Refreshed')
-		print(f'\n\n{self.event_mapping.keys()}\n\n')
+		# print(f'\n\n{self.event_mapping.keys()}\n\n')
 
 
 	async def user_count(self, update, context):
@@ -251,6 +265,8 @@ class Bot:
 	async def daily_newsletter(self, context, chat_id=None, reply_markup=None) -> None:
 		""" Newsletter """
 
+		# print(context, chat_id)
+
 		if chat_id is None:
 			chat_id = context._chat_id
 
@@ -260,6 +276,8 @@ class Bot:
 			reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')]])
 
 
+		# print(f'sending newsletter to {chat_id}')
+
 		if message['photo'] is None:
 			await context.bot.send_message(chat_id,
 										   text=message['text'],
@@ -267,9 +285,10 @@ class Bot:
 										   reply_markup=reply_markup)
 		else:
 			message['photo'] = await load_photo(context, message['photo'])
-			output = await send_photo(context,
+			output = await send_photo(context=context,
 									  caption=message['text'],
 									  photo=message['photo'],
+									  chat_id=chat_id,
 									  reply_markup=reply_markup)
 
 			if isinstance(output, str):
@@ -280,16 +299,25 @@ class Bot:
 		print(f'{clr.cyan}\nSending newsletter\n{clr.yellow}')
 
 		counter = 0
-		for user in self.connected_users.values():
+		iterlist = [user.chat_id for user in list(self.connected_users.values())]
+		for chat_id in iterlist:
+			try:
+				await self.daily_newsletter(context=context, chat_id = chat_id)
+			except Exception as e:
+				print(f'{chat_id}: {e}')
+				continue
+
 			counter += 1
-			await self.daily_newsletter(context, user.chat_id)
 
 			if counter >= DAILY_NEWSLETTER_FLOOD_LIMIT:
 				counter = 0
-				await asyncio.sleep(60)
+				print('sleeping')
+				await asyncio.sleep(FLOOD_COOLDOWN)
 
 		if DEBUG_MODE:
-			await asyncio.sleep(60)
+			await asyncio.sleep(FLOOD_COOLDOWN)
+
+		print(f'{clr.cyan}\nFinished sending newsletter\n{clr.yellow}')
 
 
 	async def authorize(self, update, context) -> bool:
@@ -301,6 +329,15 @@ class Bot:
 
 		for user_id in self.connected_users.keys():
 			self.connected_users[user_id].questions_limit = DAILY_QUESTIONS_LIMIT
+
+		# =========== MOVE SOMEWHERE ELSE ============
+		_delete = []
+		for request in self.pending_questions.values():
+			if (datetime.datetime.now() - request.creation_date) > QUESTION_REQUEST_EXPIRATION_TIME:
+				_delete.append(request.request_id)
+
+		for request_id in _delete:
+			del self.pending_questions[request_id]
 
 
 	async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -324,6 +361,10 @@ class Bot:
 				await self.update_komsa_description(update, context)
 			elif user.current_state == 'ask_question':
 				await self.ask_question(update, context)
+			elif user.current_state == 'send_personal':
+				await self.send_personal_message(update, context)
+			elif user.current_state == "banning_user":
+				await self.ban_user(update, context)
 			elif user.current_state is not None and "answering_question" in user.current_state:
 				await self.answer_question(update, context)
 			elif user.current_state is not None and 'call_komsa_description' in user.current_state:
@@ -359,6 +400,7 @@ class Bot:
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.edit_newsletter, callback_data = 'edit_newsletter default')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.update_komsa_description, callback_data = 'update_komsa_description')])
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.list_pending_quiestions, callback_data = 'list_pending_quiestions')])
 		if not self.connected_users[context._user_id].auth_data and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
@@ -517,7 +559,10 @@ class Bot:
 			self.current_events[user.modified_event.string_date()] = {}
 
 		if user.modified_event_old_position is not None:
-			del self.current_events[user.modified_event_old_position[0]][user.modified_event_old_position[1]]
+			try:
+				del self.current_events[user.modified_event_old_position[0]][user.modified_event_old_position[1]]
+			except KeyError:
+				pass
 
 		self.current_events[user.modified_event.string_date()][user.modified_event.string_time()] = user.modified_event
 		self.event_mapping[user.modified_event.event_id] = user.modified_event
@@ -663,12 +708,15 @@ class Bot:
 			event = self.event_mapping[event_id]
 			if DEBUG_MODE or (event.datetime - datetime.datetime.now()).total_seconds() < 3600:
 				counter += 1
-				await user.notify(context, event)
+				try:
+					await user.notify(context, event)
+				except:
+					pass
 				user.notify_events.remove(event_id)
 
 				if counter >= DAILY_NEWSLETTER_FLOOD_LIMIT:
 					counter = 0
-					await asyncio.sleep(60)
+					await asyncio.sleep(FLOOD_COOLDOWN)
 
 
 	async def update_komsa_description(self, update, context):
@@ -761,6 +809,12 @@ class Bot:
 		if state == 'default':
 			komsa_id = callback_query[1]
 
+			if bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
+				return
+
+			if datetime.datetime.now() < self.call_komsa_cooldown[context._user_id]:
+				return
+
 			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.return_to_main_menu, callback_data=f'main_menu')]]
 			keyboard = InlineKeyboardMarkup(keyboard)
 
@@ -808,6 +862,11 @@ class Bot:
 
 
 		await context.bot.answer_callback_query(update.callback_query.id)
+		if user.banned:
+			await context.bot.send_message(user.chat_id,
+										   text=MISC_MESSAGES['you_were_banned'],
+										   parse_mode='HTML')
+			return
 
 		callback_data = update.callback_query.data.split(' ')[1::]
 		state = callback_data[0]
@@ -890,6 +949,10 @@ class Bot:
 
 	async def ask_question(self, update, context):
 
+		# await context.bot.answer_callback_query(update.callback_query.id)
+		# await context.bot.send_message(context._chat_id, text='К сожалению в данный момент эта функция не доступна')
+		# return
+
 		user = self.connected_users[context._user_id]
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
@@ -897,6 +960,13 @@ class Bot:
 
 		if update.callback_query is not None:
 			await context.bot.answer_callback_query(update.callback_query.id)
+
+			if user.banned:
+				await context.bot.send_message(user.chat_id,
+											   text=MISC_MESSAGES['you_were_banned'],
+											   parse_mode='HTML',
+											   reply_markup=keyboard)
+				return
 
 			if not user.auth_data:
 				await context.bot.send_message(context._chat_id,
@@ -966,6 +1036,7 @@ class Bot:
 		if update.callback_query is not None:
 			await context.bot.answer_callback_query(update.callback_query.id)
 			request_id = int(update.callback_query.data.split(' ')[1])
+			request = self.pending_questions[request_id]
 
 			if request_id not in self.pending_questions.keys():
 				await _already_answered()
@@ -973,8 +1044,14 @@ class Bot:
 
 			self.connected_users[context._user_id].current_state = f"answering_question {request_id}"
 
+			sender_data = self.connected_users[request.sender_id].auth_data
+			text = MISC_MESSAGES['enter_question_answer'].format(sender_data['name'],
+																 sender_data['surname'],
+																 sender_data['grade'],
+																 request.question)
 			await context.bot.send_message(context._chat_id,
-										   text=MISC_MESSAGES['enter_question_answer'],
+										   text=text,
+										   reply_markup=keyboard,
 										   parse_mode='HTML')
 		else:
 			answerer = self.connected_users[context._user_id]
@@ -1002,7 +1079,116 @@ class Bot:
 										   reply_markup=keyboard)
 
 			answerer.current_state = None
+			request.answered = True
 
+
+	async def list_pending_quiestions(self, update, context):
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+
+		for request in self.pending_questions.values():
+			if not request.answered:
+				text = request.creation_date.strftime('%d.%m %H:%M:%S')
+				keyboard.append([InlineKeyboardButton(text, callback_data=f'answer_question {request.request_id}')])
+
+		keyboard = InlineKeyboardMarkup(keyboard)
+		await context.bot.send_message(context._chat_id,
+									   text=MISC_MESSAGES['list_pending_quiestions'],
+									   parse_mode="HTML",
+									   reply_markup=keyboard)
+
+
+	async def send_personal_message(self, update, context):
+
+		if context._user_id not in CONFIG['ROOT_USERS']:
+			return
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+
+		if update.message.text == '/send_personal':
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['send_personal'],
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
+			self.connected_users[context._user_id].current_state = "send_personal"
+			return
+
+		data, message = update.message.text.split('\n')
+		name, surname = data.split(' ')
+
+		for user in self.connected_users.values():
+			if not user.verify_auth_data():
+				continue
+
+			if user.auth_data['name'] == name and user.auth_data['surname'] == surname:
+				await context.bot.send_message(user.chat_id,
+											   text=message,
+											   parse_mode='HTML',
+											   reply_markup=keyboard)
+
+				success_message = MISC_MESSAGES['personal_message_was_sent'].format(
+																					user.auth_data['name'],
+																					user.auth_data['surname'],
+																					user.auth_data['grade'])
+				await context.bot.send_message(context._chat_id,
+											   text=success_message,
+											   parse_mode='HTML',
+											   reply_markup=keyboard)
+				return
+
+		await context.bot.send_message(context._chat_id,
+									   text=MISC_MESSAGES['no_user_with_such_credentials'],
+									   parse_mode='HTML',
+									   reply_markup=keyboard)
+
+
+	async def ban_user(self, update, context):
+
+		if context._user_id not in CONFIG['ROOT_USERS']:
+			return
+
+		caller = self.connected_users[context._user_id]
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
+		if caller.current_state == "banning_user":
+			caller.current_state = None
+			name, surname = update.message.text.split(' ')
+
+			for user in self.connected_users.values():
+				if not user.auth_data:
+					continue
+
+				if user.auth_data['name'] == name and user.auth_data['surname'] == surname:
+					user.banned = not user.banned
+
+
+					res = MISC_MESSAGES['user_was_banned'].format(user.auth_data['name'],
+																  user.auth_data['surname'],
+																  user.auth_data['grade'],
+																  ["разблокирован", 'заблокирован'][int(user.banned)])
+
+					await context.bot.send_message(context._chat_id,
+												   text=res,
+												   parse_mode='HTML',
+												   reply_markup=keyboard)
+					return
+		else:
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['ban_user'],
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
+			caller.current_state = "banning_user"
+			return
+
+		await context.bot.send_message(context._chat_id,
+									   text=MISC_MESSAGES['no_user_with_such_credentials'],
+									   parse_mode='HTML',
+									   reply_markup=keyboard)
 
 
 
@@ -1019,30 +1205,33 @@ def main():
 	application.add_handler(CommandHandler("refresh", bot.refresh))
 	application.add_handler(CommandHandler("save_all", bot.async_save))
 	application.add_handler(CommandHandler("user_count", bot.user_count))
+	application.add_handler(CommandHandler("send_personal", bot.send_personal_message))
+	application.add_handler(CommandHandler("ban_user", bot.ban_user))
 
 	application.add_handler(MessageHandler(filters.PHOTO, bot.handle_message))
 	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
 
 	callback_handlers = {
-			bot.echo                     : 'echo',
-			bot.main_menu                : 'main_menu',
-			bot.get_events               : 'get_events',
-			bot.save_modified_event      : 'save_modified_event',
-			bot.decline_modified_event   : 'decline_modified_event',
-			bot.event_modification       : 'event_modification',
-			bot.remove_event             : 'remove_event',
-			bot.user_settings            : 'user_settings',
-			bot.edit_newsletter          : 'edit_newsletter',
-			bot.canteen_menu             : 'canteen_menu',
-			bot.setup_notification       : 'setup_notification',
-			bot.update_komsa_description : 'update_komsa_description',
-			bot.faq                      : 'faq',
-			bot.call_komsa               : 'call_komsa',
-			bot.confirm_call_from_tutor  : "confirm_call_from_tutor",
-			bot.confirm_call_from_root   : "confirm_call_from_root",
-			bot.user_confirm_komsa_call  : "user_confirm_komsa_call",
-			bot.ask_question             : "ask_question",
-			bot.answer_question          : "answer_question"
+			bot.echo                       : 'echo',
+			bot.main_menu                  : 'main_menu',
+			bot.get_events                 : 'get_events',
+			bot.save_modified_event        : 'save_modified_event',
+			bot.decline_modified_event     : 'decline_modified_event',
+			bot.event_modification         : 'event_modification',
+			bot.remove_event               : 'remove_event',
+			bot.user_settings              : 'user_settings',
+			bot.edit_newsletter            : 'edit_newsletter',
+			bot.canteen_menu               : 'canteen_menu',
+			bot.setup_notification         : 'setup_notification',
+			bot.update_komsa_description   : 'update_komsa_description',
+			bot.faq                        : 'faq',
+			bot.call_komsa                 : 'call_komsa',
+			bot.confirm_call_from_tutor    : "confirm_call_from_tutor",
+			bot.confirm_call_from_root     : "confirm_call_from_root",
+			bot.user_confirm_komsa_call    : "user_confirm_komsa_call",
+			bot.ask_question               : "ask_question",
+			bot.answer_question            : "answer_question",
+			bot.list_pending_quiestions    : "list_pending_quiestions",
 	}
 
 	for function, pattern in callback_handlers.items():

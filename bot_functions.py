@@ -21,7 +21,7 @@ CONFIG = utils.read_config()
 
 class CallKomsaRequest:
 	def __init__(self, sender_id:int = 0, reciever_id:int = 0, description:str = ""):
-		self.request_id = random.randint(1, 1<<128)
+		self.request_id = random.randint(1, 1<<48)
 
 		self.sender_id = sender_id
 		self.reciever_id = reciever_id
@@ -30,13 +30,15 @@ class CallKomsaRequest:
 		self.creation_date = datetime.datetime.now()
 
 		self.confirmed_by_user  = False
-		self.confirmed_by_tutor = False
+		self.confirmed_by_tutor = True
 		self._filally_confirmed = False
 
 
 class AskQuestionRequest:
-	def __init__(self, sender_id:int = 0, question:str = "", request_id:int = random.randint(1, 1<<128)):
+	def __init__(self, sender_id:int = 0, question:str = "", request_id:int = 0):
 		self.request_id = request_id
+		if request_id == 0:
+			self.request_id = random.randint(1, 1<<48)
 
 		self.sender_id = sender_id
 		self.question = question
@@ -45,7 +47,7 @@ class AskQuestionRequest:
 		self.creation_date = datetime.datetime.now()
 
 		self.answer_text = '' # not used currently
-		self.answered = False
+		self.answered = False # not used currently (multiple answers are possible)
 
 
 def check_call_request_sender(lst:dict[int, CallKomsaRequest], sender_id:int) -> int:
