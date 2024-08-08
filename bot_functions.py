@@ -50,6 +50,37 @@ class AskQuestionRequest:
 		self.answered = False # not used currently (multiple answers are possible)
 
 
+class MemeOffer:
+	def __init__(self, sender_id:int = 0, text:str = "", photo:str = None, offer_id:int = 0,
+					creation_date:float = .0):
+		self.offer_id = offer_id
+		if offer_id == 0:
+			self.offer_id = random.randint(1, 1<<48)
+
+		if creation_date == 0.0:
+			self.creation_date = datetime.datetime.now()
+		else:
+			self.creation_date = datetime.fromtimestamp(creation_date)
+
+		self.sender_id = sender_id
+		self.text = text
+		self.photo = photo
+
+
+	def to_json(self):
+		return {
+				"offer_id":self.offer_id,
+				"sender_id":self.sender_id,
+				"text":self.text,
+				"photo":self.photo,
+				"creation_date":self.creation_date.timestamp()
+		}
+
+
+def main_menu_keyboard():
+	return InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]])
+
+
 def check_call_request_sender(lst:dict[int, CallKomsaRequest], sender_id:int) -> int:
 	for request_id, request in lst.items():
 		if request.sender_id == sender_id:
@@ -62,7 +93,7 @@ async def send_confirm_call_message_to_root(users:dict, request:CallKomsaRequest
 	sender_data = users[request.sender_id].auth_data
 	root = users[request.reciever_id]
 
-	text = f'Вас вызывает {sender_data["name"]} {sender_data["surname"]}\n\n' + \
+	text = f'Вас вызывает {sender_data["name"]} {sender_data["surname"]} из класса {sender_data["grade"]}\n\n' + \
 		   f'со следующим описанием:\n\n{request.description}'
 
 	keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.accept_call_root, callback_data=f"confirm_call_from_root confirm {request.request_id}"),
@@ -86,7 +117,7 @@ async def send_confirm_call_message_to_tutor(users:dict, request:CallKomsaReques
 		   f'{root.auth_data["name"]} {root.auth_data["surname"]}. Разрешаете ли вы ему это сделать?\n' + \
 		   f'Ученик так же прикрепил описание:\n\n{request.description}'
 
-	for user in users.values():
+	for user in list(users.values()):
 		if not user.auth_data or user.role != 'tutor':
 			continue
 

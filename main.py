@@ -35,10 +35,10 @@ from constants import (
 	MISC_MESSAGES,
 	FLOOD_COOLDOWN,
 	BUTTON_NAMINGS,
+	MESSAGE_FLOOD_LIMIT,
 	KOMSA_CALL_COOLDOWN,
 	DAILY_NEWSLETTER_TIME,
 	DAILY_QUESTIONS_LIMIT,
-	DAILY_NEWSLETTER_FLOOD_LIMIT,
 	QUESTION_REQUEST_EXPIRATION_TIME,
 	KOMSA_CALL_REQUEST_EXPIRATION_TIME,
 )
@@ -179,6 +179,7 @@ class Bot:
 		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {}) if "--no-call-requests" not in sys.argv else {}
 		self.pending_call_requests = self.static_data.get('pending_call_requests', {}) if "--no-call-requests" not in sys.argv else {}
 		self.pending_questions = self.static_data.get('pending_questions', {})
+		self.meme_offers = self.static_data.get('meme_offers', {})
 
 		# print(self.static_data['newsletter'], end='\n\n')
 		if '--no-newsletter' in sys.argv:
@@ -192,6 +193,7 @@ class Bot:
 		self.static_data['call_komsa_cooldown'] = self.call_komsa_cooldown
 		self.static_data['pending_call_requests'] = self.pending_call_requests
 		self.static_data['pending_questions'] = self.pending_questions
+		self.static_data['meme_offers'] = self.meme_offers
 
 		save_events(self.event_mapping)
 		save_users(list(self.connected_users.values()))
@@ -244,6 +246,22 @@ class Bot:
 		await context.bot.send_message(context._chat_id, text=res)
 
 
+	async def print_call_requests(self, update, context):
+		print('\n\n')
+		for request in self.pending_call_requests.values():
+			sender = self.connected_users[request.sender_id]
+			reciever = self.connected_users[request.reciever_id]
+
+			print(f'sender: {sender.auth_data}')
+			print(f'reciever: {reciever.auth_data}')
+			print(f'description: {request.description}')
+			print(f'creation_date: {request.creation_date.strftime("%d.%m %H:%M")}')
+			print(f'status:\n\tuser: {request.confirmed_by_user}\n\ttutor: {request.confirmed_by_tutor}\n\tfinally: {request._filally_confirmed}')
+			print('\n')
+
+		await context.bot.send_message(context._chat_id, text='printed')
+
+
 	async def start_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 		if update.message is None:
 			return
@@ -251,7 +269,7 @@ class Bot:
 		user = update.message.from_user
 
 		if user.id not in self.connected_users:
-			print(f'{clr.yellow}{user.first_name} {user.last_name} {user.username} [{user.id}] Has just launched the bot')
+			print(f'{clr.green}{user.first_name} {user.last_name} {user.username} [{user.id}] Has just launched the bot{clr.yellow}')
 			self.connected_users[context._user_id] = BotUser(user_id=context._user_id, chat_id=context._chat_id)
 
 			# self.connected_users[context._user_id].setup_daily_newsletter(context, self.daily_newsletter)
@@ -260,6 +278,56 @@ class Bot:
 		await self.main_menu(update, context)
 
 		# await context.bot.send_message(update.message.chat.id, "You've already started me")
+
+
+	async def send_all(self, update, context, message:dict = {}, reply_markup=None):
+		sender = self.connected_users[context._user_id]
+		if sender.role != 'root':
+			return
+
+		if not message and update.message is not None and update.message.text != "/send_all":
+			message = {'photo':None, 'text':""}
+			if update.message.photo:
+				message['photo'] = await save_photo(context, update.message.photo[-1].file_id)
+				message['text'] = update.message.caption if update.message.caption is not None else ""
+			else:
+				message['text'] = update.message.text
+		elif not message and (update.message is None or update.message.text == "/send_all"):
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['send_all'])
+			sender.current_state = "send_all"
+			return
+
+		print(f'{clr.cyan}seding message to everyone{clr.yellow}')
+
+		await context.bot.send_message(context._chat_id,
+									   text=MISC_MESSAGES['sending_message_to_everyone'])
+
+		sender.current_state = None
+		users = list(self.connected_users.values())
+		counter = 0
+		for user in users:
+			try:
+				if message['photo'] is not None:
+					await send_photo(context=context,
+									 photo=message['photo'],
+									 caption=message['text'],
+									 chat_id=user.chat_id,
+									 reply_markup=reply_markup)
+				else:
+					await context.bot.send_message(user.chat_id,
+												   text=message['text'],
+												   parse_mode='HTML',
+												   reply_markup=reply_markup)
+			except Exception as e:
+				print(e)
+
+			counter += 1
+			if counter >= MESSAGE_FLOOD_LIMIT:
+				counter = 0
+				print('sleeping')
+				await asyncio.sleep(FLOOD_COOLDOWN)
+
+		print(f'{clr.cyan}FINISHED seding message to everyone{clr.yellow}')
 
 
 	async def daily_newsletter(self, context, chat_id=None, reply_markup=None) -> None:
@@ -298,24 +366,9 @@ class Bot:
 	async def send_daily_newsletter(self, context):
 		print(f'{clr.cyan}\nSending newsletter\n{clr.yellow}')
 
-		counter = 0
-		iterlist = [user.chat_id for user in list(self.connected_users.values())]
-		for chat_id in iterlist:
-			try:
-				await self.daily_newsletter(context=context, chat_id = chat_id)
-			except Exception as e:
-				print(f'{chat_id}: {e}')
-				continue
-
-			counter += 1
-
-			if counter >= DAILY_NEWSLETTER_FLOOD_LIMIT:
-				counter = 0
-				print('sleeping')
-				await asyncio.sleep(FLOOD_COOLDOWN)
-
-		if DEBUG_MODE:
-			await asyncio.sleep(FLOOD_COOLDOWN)
+		reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')]])
+		message = self.static_data.get('newsletter', {'text':'No newsletter', 'photo':None})
+		await self.send_all(update, context, message=message, reply_markup=reply_markup)
 
 		print(f'{clr.cyan}\nFinished sending newsletter\n{clr.yellow}')
 
@@ -340,7 +393,7 @@ class Bot:
 			del self.pending_questions[request_id]
 
 
-	async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+	async def handle_message(self, update, context) -> None:
 		answer_text = None
 
 		if update.message.from_user.id not in self.connected_users.keys():
@@ -365,6 +418,10 @@ class Bot:
 				await self.send_personal_message(update, context)
 			elif user.current_state == "banning_user":
 				await self.ban_user(update, context)
+			elif user.current_state == 'offer_meme':
+				await self.meme_offering(update, context)
+			elif user.current_state == 'send_all':
+				await self.send_all(update, context)
 			elif user.current_state is not None and "answering_question" in user.current_state:
 				await self.answer_question(update, context)
 			elif user.current_state is not None and 'call_komsa_description' in user.current_state:
@@ -384,7 +441,7 @@ class Bot:
 		print(self.connected_users[context._user_id].notify_events)
 
 
-	async def main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, force_message = False) -> None:
+	async def main_menu(self, update, context, force_message = False) -> None:
 		self.connected_users[context._user_id].current_state = None
 		self.connected_users[context._user_id].modified_event = None
 
@@ -394,6 +451,7 @@ class Bot:
 					[InlineKeyboardButton(BUTTON_NAMINGS.faq, callback_data='faq default')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.komsa_list, callback_data='call_komsa default')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.ask_question, callback_data='ask_question')],
+					[InlineKeyboardButton(BUTTON_NAMINGS.meme_offer, callback_data='meme_offering')],
 					]
 
 		if self.connected_users[context._user_id].role == 'root': # TDDO
@@ -401,6 +459,8 @@ class Bot:
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.edit_newsletter, callback_data = 'edit_newsletter default')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.update_komsa_description, callback_data = 'update_komsa_description')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.list_pending_quiestions, callback_data = 'list_pending_quiestions')])
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.who_called_me, callback_data = 'who_called_me')])
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.see_offered_memes, callback_data='see_offered_memes default')])
 		if not self.connected_users[context._user_id].auth_data and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
@@ -637,8 +697,7 @@ class Bot:
 
 		menu = self.static_data.get('canteen_menu', "Menu:")
 
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-		keyboard = InlineKeyboardMarkup(keyboard)
+		keyboard = bot_functions.main_menu_keyboard()
 
 		if update.callback_query is None:
 			self.connected_users[context._user_id].current_state = None
@@ -714,7 +773,7 @@ class Bot:
 					pass
 				user.notify_events.remove(event_id)
 
-				if counter >= DAILY_NEWSLETTER_FLOOD_LIMIT:
+				if counter >= MESSAGE_FLOOD_LIMIT:
 					counter = 0
 					await asyncio.sleep(FLOOD_COOLDOWN)
 
@@ -723,8 +782,7 @@ class Bot:
 
 		user = self.connected_users[context._user_id]
 
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-		keyboard = InlineKeyboardMarkup(keyboard)
+		keyboard = bot_functions.main_menu_keyboard()
 
 		if update.callback_query is not None:
 			user.current_state = 'update_komsa_description'
@@ -832,6 +890,7 @@ class Bot:
 
 			self.call_komsa_cooldown[context._user_id] = datetime.datetime.now() + KOMSA_CALL_COOLDOWN
 			await bot_functions.send_confirm_call_message_to_tutor(self.connected_users, request=request, context=context)
+			# await bot_functions.send_confirm_call_message_to_root(self.connected_users, request=request, context=context)
 			await update.callback_query.edit_message_text(text="Запрос отправлен")
 
 
@@ -909,6 +968,7 @@ class Bot:
 
 		if state == 'confirm':
 			await update.callback_query.edit_message_text(text="Вы разрешили")
+			self.pending_call_requests[request_id].confirmed_by_tutor = True
 			await bot_functions.send_confirm_call_message_to_root(
 									users=self.connected_users,
 									request=self.pending_call_requests[request_id],
@@ -933,18 +993,73 @@ class Bot:
 		root = self.connected_users[request.reciever_id]
 
 		if state == 'confirm':
-			await update.callback_query.edit_message_text(text="Не забудте прийти")
+			await update.callback_query.edit_message_text(text=f"{request.description}\n\nНе забудте прийти")
+			request._filally_confirmed = True
 
 			text = f"Комсёнок {root.auth_data['name']} {root.auth_data['surname']} к вам придёт, ждите"
+			tutor_text = "Комсёнок {} {} сегодня придёт к {} {}"
 			await context.bot.send_message(sender.chat_id, text=text)
 		else:
 			await update.callback_query.edit_message_text(text="Вы отказались прийти")
 
 			text = f"К сожалению комсёнок {root.auth_data['name']} {root.auth_data['surname']} к вам не сможет прийти"
+			tutor_text = "Комсёнок {} {} не сможет сегодня прийти к {} {}"
 			await context.bot.send_message(sender.chat_id, text=text)
+
+		tutor_text = tutor_text.format(root.auth_data['name'],
+									   root.auth_data['surname'],
+									   sender.auth_data['name'],
+									   sender.auth_data['surname'])
+
+		for user in list(self.connected_users.values()):
+			if user.role != 'tutor':
+				continue
+
+			if user.auth_data['grade'] == sender.auth_data['grade']:
+				await context.bot.send_message(user.chat_id,
+											   text=tutor_text,
+											   reply_markup=bot_functions.main_menu_keyboard())
+
 
 		del self.pending_call_requests[request_id]
 		await context.bot.answer_callback_query(update.callback_query.id)
+
+
+	async def who_called_me(self, update, context):
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+		user = self.connected_users[context._user_id]
+
+		data = update.callback_query.data.split(' ')
+		if len(data) > 1:
+			request = self.pending_call_requests[int(data[1])]
+			sender = self.connected_users[request.sender_id]
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')],
+						[InlineKeyboardButton(BUTTON_NAMINGS.accept_call_root, callback_data=f"confirm_call_from_root confirm {request.request_id}"),
+						 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_root, callback_data=f"confirm_call_from_root decline {request.request_id}")]]
+
+			keyboard = InlineKeyboardMarkup(keyboard)
+			text = f'{sender.auth_data["grade"]} {sender.auth_data["name"]} {sender.auth_data["surname"]}\n\n{request.description}'
+			await context.bot.send_message(context._chat_id,
+										   text=text,
+										   reply_markup=keyboard)
+			return
+
+		called = []
+		for request in self.pending_call_requests.values():
+			if request.reciever_id == user.user_id and request.confirmed_by_user and request.confirmed_by_tutor:
+				called.append(request)
+
+		text = 'Вот список тех, кому вы не ответили на запрос:'
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		for request in called:
+			sender = self.connected_users[request.sender_id]
+			button_name = f'{sender.auth_data["grade"]} {sender.auth_data["name"]} {sender.auth_data["surname"]}'
+			keyboard.append([InlineKeyboardButton(button_name, callback_data=f'who_called_me {request.request_id}')])
+
+		keyboard = InlineKeyboardMarkup(keyboard)
+		await context.bot.send_message(context._chat_id, text=text, reply_markup=keyboard)
 
 
 	async def ask_question(self, update, context):
@@ -955,8 +1070,7 @@ class Bot:
 
 		user = self.connected_users[context._user_id]
 
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-		keyboard = InlineKeyboardMarkup(keyboard)
+		keyboard = bot_functions.main_menu_keyboard()
 
 		if update.callback_query is not None:
 			await context.bot.answer_callback_query(update.callback_query.id)
@@ -1024,8 +1138,7 @@ class Bot:
 
 	async def answer_question(self, update, context):
 
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-		keyboard = InlineKeyboardMarkup(keyboard)
+		keyboard = bot_functions.main_menu_keyboard()
 
 		async def _already_answered():
 			await context.bot.send_message(context._chat_id,
@@ -1049,10 +1162,10 @@ class Bot:
 																 sender_data['surname'],
 																 sender_data['grade'],
 																 request.question)
+
 			await context.bot.send_message(context._chat_id,
 										   text=text,
-										   reply_markup=keyboard,
-										   parse_mode='HTML')
+										   reply_markup=keyboard)
 		else:
 			answerer = self.connected_users[context._user_id]
 			request_id = int(answerer.current_state.split(' ')[1])
@@ -1070,12 +1183,10 @@ class Bot:
 
 			await context.bot.send_message(sender.chat_id,
 										   text=answer_text,
-										   parse_mode='HTML',
 										   reply_markup=keyboard)
 
 			await context.bot.send_message(answerer.chat_id,
 										   text=MISC_MESSAGES['answer_was_sent'],
-										   parse_mode='HTML',
 										   reply_markup=keyboard)
 
 			answerer.current_state = None
@@ -1104,8 +1215,7 @@ class Bot:
 		if context._user_id not in CONFIG['ROOT_USERS']:
 			return
 
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-		keyboard = InlineKeyboardMarkup(keyboard)
+		keyboard = bot_functions.main_menu_keyboard()
 
 
 		if update.message.text == '/send_personal':
@@ -1152,8 +1262,7 @@ class Bot:
 
 		caller = self.connected_users[context._user_id]
 
-		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
-		keyboard = InlineKeyboardMarkup(keyboard)
+		keyboard = bot_functions.main_menu_keyboard()
 
 		if caller.current_state == "banning_user":
 			caller.current_state = None
@@ -1191,6 +1300,104 @@ class Bot:
 									   reply_markup=keyboard)
 
 
+	async def meme_offering(self, update, context):
+
+		keyboard = bot_functions.main_menu_keyboard()
+
+		user = self.connected_users[context._user_id]
+		if user.banned:
+			await context.bot.send_message(user.chat_id,
+										   text=MISC_MESSAGES['you_were_banned'],
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
+			return
+
+		if not user.auth_data:
+			await context.bot.send_message(context._chat_id,
+									 text=MISC_MESSAGES['authorization_required'],
+									 parse_mode='HTML',
+									 reply_markup=keyboard)
+			return
+
+
+		if update.callback_query is not None:
+			await context.bot.answer_callback_query(update.callback_query.id)
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['offer_meme'],
+										   parse_mode='HTML',
+										   reply_markup=keyboard)
+
+			user.current_state = "offer_meme"
+			return
+		else:
+			user.current_state = None
+			offer = bot_functions.MemeOffer()
+
+			if update.message.photo:
+				offer.photo = await save_photo(context, update.message.photo[-1])
+				if update.message.caption is not None:
+					offer.text = update.message.caption
+			else:
+				offer.text = update.message.text
+
+			offer.text = f'{offer.text}\n\nОтправитель:{user.auth_data["grade"]} {user.auth_data["name"]} {user.auth_data["surname"]}'
+
+			self.meme_offers[offer.offer_id] = offer
+
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['offered_meme_was_sent'],
+										   reply_markup=keyboard)
+
+
+	async def see_offered_memes(self, update, context):
+
+		await context.bot.answer_callback_query(update.callback_query.id)
+		if len(self.meme_offers) == 0:
+			await context.bot.send_message(context._chat_id,
+										   text=MISC_MESSAGES['no_memes_were_offered'],
+										   reply_markup=bot_functions.main_menu_keyboard())
+			return
+
+		data = update.callback_query.data.split(' ')[1::]
+		state = data[0]
+		if state == 'default':
+			state = 'show'
+			offer_id = list(self.meme_offers.keys())[0]
+		else:
+			offer_id = int(data[1])
+
+		offer = self.meme_offers[offer_id]
+		prev_offer_id = list(self.meme_offers.keys())[(list(self.meme_offers.keys()).index(offer_id) - 1) % len(self.meme_offers.keys())]
+		next_offer_id = list(self.meme_offers.keys())[(list(self.meme_offers.keys()).index(offer_id) + 1) % len(self.meme_offers.keys())]
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')],
+					[InlineKeyboardButton("<", callback_data=f'see_offered_memes show {prev_offer_id}'),
+					 InlineKeyboardButton(">", callback_data=f'see_offered_memes show {next_offer_id}')]]
+
+		if state == 'show':
+			await context.bot.delete_message(context._chat_id, update.callback_query.message.id)
+
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.delete_meme_offer, callback_data=f'see_offered_memes delete {offer_id}')])
+			keyboard = InlineKeyboardMarkup(keyboard)
+
+			if offer.photo is not None:
+				await send_photo(context=context,
+								 photo=offer.photo,
+								 caption=offer.text,
+								 reply_markup=keyboard)
+			else:
+				await context.bot.send_message(context._chat_id,
+											   text=offer.text,
+											   reply_markup=keyboard)
+		elif state == 'delete':
+			keyboard = InlineKeyboardMarkup(keyboard)
+			await context.bot.edit_message_reply_markup(chat_id=context._chat_id,
+														message_id=update.callback_query.message.id,
+														reply_markup=keyboard)
+
+			del self.meme_offers[offer_id]
+
+
 
 
 
@@ -1202,11 +1409,14 @@ def main():
 	application = Application.builder().token(config['BOT_TOKEN']).read_timeout(7).get_updates_read_timeout(42).build()
 
 	application.add_handler(CommandHandler("start", bot.start_session))
+	application.add_handler(CommandHandler("main_menu", bot.main_menu))
 	application.add_handler(CommandHandler("refresh", bot.refresh))
 	application.add_handler(CommandHandler("save_all", bot.async_save))
+	application.add_handler(CommandHandler("send_all", bot.send_all))
 	application.add_handler(CommandHandler("user_count", bot.user_count))
 	application.add_handler(CommandHandler("send_personal", bot.send_personal_message))
 	application.add_handler(CommandHandler("ban_user", bot.ban_user))
+	application.add_handler(CommandHandler("print_call_requests", bot.print_call_requests))
 
 	application.add_handler(MessageHandler(filters.PHOTO, bot.handle_message))
 	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
@@ -1232,6 +1442,9 @@ def main():
 			bot.ask_question               : "ask_question",
 			bot.answer_question            : "answer_question",
 			bot.list_pending_quiestions    : "list_pending_quiestions",
+			bot.who_called_me              : "who_called_me",
+			bot.meme_offering              : "meme_offering",
+			bot.see_offered_memes          : "see_offered_memes",
 	}
 
 	for function, pattern in callback_handlers.items():

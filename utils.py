@@ -88,6 +88,7 @@ async def send_photo(context, photo, caption, chat_id=None, reply_markup=None):
 										   reply_markup=reply_markup)
 
 	if not isinstance(photo, str):
+		print(f'{clr.red}saving_photo_trigger{clr.yellow}')
 		return await save_photo(context, message.photo[-1])
 
 	return
