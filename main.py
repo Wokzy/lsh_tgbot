@@ -41,6 +41,7 @@ from constants import (
 	DAILY_QUESTIONS_LIMIT,
 	QUESTION_REQUEST_EXPIRATION_TIME,
 	KOMSA_CALL_REQUEST_EXPIRATION_TIME,
+	NO_CALL_COOLDOWN,
 )
 
 from utils import (
@@ -57,10 +58,8 @@ from utils import (
 	save_users,
 	load_users,
 	print_komsa_description,
-	send_photo
+	send_photo,
 )
-
-
 
 
 __author__ = 'Yegor Yershov'
@@ -94,6 +93,8 @@ class BotUser:
 		self.notify_events = set(notify_events)
 
 		self.questions_limit = int(questions_limit)
+
+		self.user_mode = 'default' # (aipt - ai_intercept)
 
 
 	def to_json(self) -> dict:
@@ -176,12 +177,12 @@ class Bot:
 		self.current_events, self.event_mapping = load_events(event_object=events.Event)
 
 		self.komsa = load_komsa_list()
-		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {}) if "--no-call-requests" not in sys.argv else {}
 		self.pending_call_requests = self.static_data.get('pending_call_requests', {}) if "--no-call-requests" not in sys.argv else {}
+		self.call_komsa_cooldown = self.static_data.get('call_komsa_cooldown', {}) if NO_CALL_COOLDOWN else {}
 		self.pending_questions = self.static_data.get('pending_questions', {})
 		self.meme_offers = self.static_data.get('meme_offers', {})
 
-		# print(self.static_data['newsletter'], end='\n\n')
+		print(list(self.pending_call_requests.keys()), end='\n\n')
 		if '--no-newsletter' in sys.argv:
 			self.static_data['newsletter'] = {'text':'No newsletter', 'photo':None}
 
@@ -194,6 +195,7 @@ class Bot:
 		self.static_data['pending_call_requests'] = self.pending_call_requests
 		self.static_data['pending_questions'] = self.pending_questions
 		self.static_data['meme_offers'] = self.meme_offers
+
 
 		save_events(self.event_mapping)
 		save_users(list(self.connected_users.values()))
@@ -252,6 +254,7 @@ class Bot:
 			sender = self.connected_users[request.sender_id]
 			reciever = self.connected_users[request.reciever_id]
 
+			print(f'id: {request.request_id}')
 			print(f'sender: {sender.auth_data}')
 			print(f'reciever: {reciever.auth_data}')
 			print(f'description: {request.description}')
@@ -366,9 +369,22 @@ class Bot:
 	async def send_daily_newsletter(self, context):
 		print(f'{clr.cyan}\nSending newsletter\n{clr.yellow}')
 
-		reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')]])
-		message = self.static_data.get('newsletter', {'text':'No newsletter', 'photo':None})
-		await self.send_all(update, context, message=message, reply_markup=reply_markup)
+		# reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')]])
+		# message = self.static_data.get('newsletter', {'text':'No newsletter', 'photo':None})
+		# await self.send_all(update, context, message=message, reply_markup=reply_markup)
+		users = list(self.connected_users.values())
+		counter = 0
+		for user in users:
+			try:
+				await self.daily_newsletter(context, chat_id = user.chat_id)
+			except Exception as e:
+				print(e)
+
+			counter += 1
+			if counter >= MESSAGE_FLOOD_LIMIT:
+				counter = 0
+				print('sleeping')
+				await asyncio.sleep(FLOOD_COOLDOWN)
 
 		print(f'{clr.cyan}\nFinished sending newsletter\n{clr.yellow}')
 
@@ -400,6 +416,11 @@ class Bot:
 			answer_text = "Enter /start to start bot"
 		else:
 			user = self.connected_users[context._user_id]
+
+			if user.user_mode == 'aipt':
+				await self.aipt.aipt_message_handler(update, context)
+				return
+
 			if user.modified_event is not None:
 				await self.event_modification(update, context)
 			if user.current_state == 'authorization':
@@ -442,8 +463,15 @@ class Bot:
 
 
 	async def main_menu(self, update, context, force_message = False) -> None:
-		self.connected_users[context._user_id].current_state = None
-		self.connected_users[context._user_id].modified_event = None
+
+		user = self.connected_users[context._user_id]
+
+		user.current_state = None
+		user.modified_event = None
+		user.user_mode = 'default'
+
+		user.chat_id = context._chat_id
+		user.user_id = context._user_id
 
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.get_events, callback_data='get_events')],
 					[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data='canteen_menu')],
@@ -454,14 +482,14 @@ class Bot:
 					[InlineKeyboardButton(BUTTON_NAMINGS.meme_offer, callback_data='meme_offering')],
 					]
 
-		if self.connected_users[context._user_id].role == 'root': # TDDO
+		if user.role == 'root': # TDDO
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.create_event, callback_data = 'event_modification new_event')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.edit_newsletter, callback_data = 'edit_newsletter default')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.update_komsa_description, callback_data = 'update_komsa_description')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.list_pending_quiestions, callback_data = 'list_pending_quiestions')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.who_called_me, callback_data = 'who_called_me')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.see_offered_memes, callback_data='see_offered_memes default')])
-		if not self.connected_users[context._user_id].auth_data and self.connected_users[context._user_id].role != 'root':
+		if not user.auth_data and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
 		if context._user_id in CONFIG['ROOT_USERS']:
@@ -870,8 +898,9 @@ class Bot:
 			if bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
 				return
 
-			if datetime.datetime.now() < self.call_komsa_cooldown[context._user_id]:
-				return
+			if context._user_id in self.call_komsa_cooldown.keys():
+				if datetime.datetime.now() < self.call_komsa_cooldown[context._user_id]:
+					return
 
 			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.return_to_main_menu, callback_data=f'main_menu')]]
 			keyboard = InlineKeyboardMarkup(keyboard)
@@ -910,6 +939,9 @@ class Bot:
 
 		for item in _delete:
 			del self.pending_call_requests[item]
+
+		if NO_CALL_COOLDOWN:
+			self.call_komsa_cooldown = {}
 
 		# =======================================================
 
@@ -950,7 +982,7 @@ class Bot:
 
 			if user.role == 'user' and user.auth_data and CONFIG['ALLOW_INVITATIONS']:
 				if not bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
-					if datetime.datetime.now() >= self.call_komsa_cooldown[context._user_id]:
+					if NO_CALL_COOLDOWN or datetime.datetime.now() >= self.call_komsa_cooldown[context._user_id]:
 						keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.call_komsa,
 															  callback_data=f'user_confirm_komsa_call default {komsa_id}')])
 
@@ -976,7 +1008,8 @@ class Bot:
 		else:
 			sender = self.connected_users[self.pending_call_requests[request_id].sender_id]
 			tutor = self.connected_users[context._user_id]
-			text = f"Воспитатель {tutor.auth_data['name']} {tutor.auth_data['surname']} запретил вам вызвать комсёнка"
+			# text = f"Воспитатель {tutor.auth_data['name']} {tutor.auth_data['surname']} запретил вам вызвать комсёнка"
+			text = "К сожалению, комсёнка пригласить не удалось. Обсудите это пожалуйста с вашими воспитателями."
 
 			await update.callback_query.edit_message_text(text="Вы запретили")
 			await context.bot.send_message(sender.chat_id, text=text)

@@ -36,10 +36,11 @@ if DEBUG_MODE:
 										  0,
 										  tzinfo=TIMEZONE)
 else:
-	DAILY_NEWSLETTER_TIME = datetime.time(6, 50, 0, 0, tzinfo=TIMEZONE)
+	DAILY_NEWSLETTER_TIME = datetime.time(7, 00, 0, 0, tzinfo=TIMEZONE)
 
 KOMSA_CALL_COOLDOWN = datetime.timedelta(hours=18)
-KOMSA_CALL_REQUEST_EXPIRATION_TIME = datetime.timedelta(days=1)
+NO_CALL_COOLDOWN = "--no-call-cooldown" in sys.argv
+KOMSA_CALL_REQUEST_EXPIRATION_TIME = datetime.timedelta(hours=12)
 
 if DEBUG_MODE:
 	_debug_time = datetime.datetime.now()

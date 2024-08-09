@@ -124,8 +124,11 @@ async def send_confirm_call_message_to_tutor(users:dict, request:CallKomsaReques
 		if user.auth_data["grade"] != sender.auth_data["grade"]:
 			continue
 
-		await context.bot.send_message(user.chat_id, text=text, reply_markup=keyboard)
-		request.confirmed_by_tutor = False
+		try:
+			await context.bot.send_message(user.chat_id, text=text, reply_markup=keyboard)
+			request.confirmed_by_tutor = False
+		except:
+			continue
 
 	if request.confirmed_by_tutor:
 		await send_confirm_call_message_to_root(users, request, context)
