@@ -16,6 +16,7 @@ AUTH_DATA_FNAME = 'auth_data.txt' # put there info in format {name} {surname} {p
 
 TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
 
+UTC_TIME_SHIFT = datetime.timedelta(hours=7) # -shift to datetime.datetime.now() FIXME
 TIMEZONE = pytz.timezone('Asia/Novosibirsk')
 DATETIME_INPUT_FORMAT = "%H:%M %d"
 DATETIME_HUMAN_FORMAT = "час:минута день (Пример: 14:00 24)"
@@ -36,7 +37,7 @@ if DEBUG_MODE:
 										  0,
 										  tzinfo=TIMEZONE)
 else:
-	DAILY_NEWSLETTER_TIME = datetime.time(7, 00, 0, 0, tzinfo=TIMEZONE)
+	DAILY_NEWSLETTER_TIME = datetime.time(6, 50, 0, 0, tzinfo=TIMEZONE)
 
 KOMSA_CALL_COOLDOWN = datetime.timedelta(hours=18)
 NO_CALL_COOLDOWN = "--no-call-cooldown" in sys.argv

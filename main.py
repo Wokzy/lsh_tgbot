@@ -30,11 +30,13 @@ from telegram.ext import (
 
 from constants import (
 	FAQ,
+	TIMEZONE,
 	DEBUG_MODE,
 	ROLE_MAPPING,
 	MISC_MESSAGES,
 	FLOOD_COOLDOWN,
 	BUTTON_NAMINGS,
+	UTC_TIME_SHIFT,
 	MESSAGE_FLOOD_LIMIT,
 	KOMSA_CALL_COOLDOWN,
 	DAILY_NEWSLETTER_TIME,
@@ -283,29 +285,13 @@ class Bot:
 		# await context.bot.send_message(update.message.chat.id, "You've already started me")
 
 
-	async def send_all(self, update, context, message:dict = {}, reply_markup=None):
-		sender = self.connected_users[context._user_id]
-		if sender.role != 'root':
-			return
-
-		if not message and update.message is not None and update.message.text != "/send_all":
-			message = {'photo':None, 'text':""}
-			if update.message.photo:
-				message['photo'] = await save_photo(context, update.message.photo[-1].file_id)
-				message['text'] = update.message.caption if update.message.caption is not None else ""
-			else:
-				message['text'] = update.message.text
-		elif not message and (update.message is None or update.message.text == "/send_all"):
-			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['send_all'])
-			sender.current_state = "send_all"
-			return
+	async def send_all(self, context):
 
 		print(f'{clr.cyan}seding message to everyone{clr.yellow}')
 
-		await context.bot.send_message(context._chat_id,
-									   text=MISC_MESSAGES['sending_message_to_everyone'])
+		message = context.job.data['message']
+		reply_markup = context.job.data['reply_markup']
 
-		sender.current_state = None
 		users = list(self.connected_users.values())
 		counter = 0
 		for user in users:
@@ -330,7 +316,39 @@ class Bot:
 				print('sleeping')
 				await asyncio.sleep(FLOOD_COOLDOWN)
 
+		if DEBUG_MODE:
+			print(f'{clr.cyan}sleeping{clr.yellow}')
+			await asyncio.sleep(FLOOD_COOLDOWN)
+
 		print(f'{clr.cyan}FINISHED seding message to everyone{clr.yellow}')
+
+
+	async def init_send_all(self, update, context, message:dict = {}, reply_markup=None):
+		sender = self.connected_users[context._user_id]
+		if sender.role != 'root':
+			return
+
+		if not message and update.message is not None and update.message.text != "/send_all":
+			message = {'photo':None, 'text':""}
+			if update.message.photo:
+				message['photo'] = await save_photo(context, update.message.photo[-1].file_id)
+				message['text'] = update.message.caption if update.message.caption is not None else ""
+			else:
+				message['text'] = update.message.text
+		elif not message and (update.message is None or update.message.text == "/send_all"):
+			await context.bot.send_message(context._chat_id, text=MISC_MESSAGES['send_all'])
+			sender.current_state = "send_all"
+			return
+
+		sender.current_state = None
+		await context.bot.send_message(context._chat_id,
+									   text=MISC_MESSAGES['sending_message_to_everyone'])
+
+		time = datetime.datetime.now() + datetime.timedelta(seconds=10) - UTC_TIME_SHIFT
+
+		context.job_queue.run_once(callback=self.send_all,
+								   when=time,
+								   data={'message':message, 'reply_markup':reply_markup})
 
 
 	async def daily_newsletter(self, context, chat_id=None, reply_markup=None) -> None:
@@ -371,7 +389,7 @@ class Bot:
 
 		# reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_NAMINGS.canteen_menu, callback_data = 'canteen_menu')]])
 		# message = self.static_data.get('newsletter', {'text':'No newsletter', 'photo':None})
-		# await self.send_all(update, context, message=message, reply_markup=reply_markup)
+		# await self.init_send_all(update, context, message=message, reply_markup=reply_markup)
 		users = list(self.connected_users.values())
 		counter = 0
 		for user in users:
@@ -442,7 +460,7 @@ class Bot:
 			elif user.current_state == 'offer_meme':
 				await self.meme_offering(update, context)
 			elif user.current_state == 'send_all':
-				await self.send_all(update, context)
+				await self.init_send_all(update, context)
 			elif user.current_state is not None and "answering_question" in user.current_state:
 				await self.answer_question(update, context)
 			elif user.current_state is not None and 'call_komsa_description' in user.current_state:
@@ -458,7 +476,7 @@ class Bot:
 		await context.bot.send_message(context._chat_id, text = "echo")
 		# await self.main_menu(update, context)
 		await context.bot.answer_callback_query(update.callback_query.id)
-		#print(context.job_queue.jobs())
+		# print(context.job_queue.jobs())
 		print(self.connected_users[context._user_id].notify_events)
 
 
@@ -1338,23 +1356,25 @@ class Bot:
 		keyboard = bot_functions.main_menu_keyboard()
 
 		user = self.connected_users[context._user_id]
-		if user.banned:
-			await context.bot.send_message(user.chat_id,
-										   text=MISC_MESSAGES['you_were_banned'],
-										   parse_mode='HTML',
-										   reply_markup=keyboard)
-			return
-
-		if not user.auth_data:
-			await context.bot.send_message(context._chat_id,
-									 text=MISC_MESSAGES['authorization_required'],
-									 parse_mode='HTML',
-									 reply_markup=keyboard)
-			return
 
 
 		if update.callback_query is not None:
 			await context.bot.answer_callback_query(update.callback_query.id)
+
+			if user.banned:
+				await context.bot.send_message(user.chat_id,
+											   text=MISC_MESSAGES['you_were_banned'],
+											   parse_mode='HTML',
+											   reply_markup=keyboard)
+				return
+
+			if not user.auth_data:
+				await context.bot.send_message(context._chat_id,
+										 text=MISC_MESSAGES['authorization_required'],
+										 parse_mode='HTML',
+										 reply_markup=keyboard)
+				return
+
 			await context.bot.send_message(context._chat_id,
 										   text=MISC_MESSAGES['offer_meme'],
 										   parse_mode='HTML',
@@ -1445,7 +1465,7 @@ def main():
 	application.add_handler(CommandHandler("main_menu", bot.main_menu))
 	application.add_handler(CommandHandler("refresh", bot.refresh))
 	application.add_handler(CommandHandler("save_all", bot.async_save))
-	application.add_handler(CommandHandler("send_all", bot.send_all))
+	application.add_handler(CommandHandler("send_all", bot.init_send_all))
 	application.add_handler(CommandHandler("user_count", bot.user_count))
 	application.add_handler(CommandHandler("send_personal", bot.send_personal_message))
 	application.add_handler(CommandHandler("ban_user", bot.ban_user))
