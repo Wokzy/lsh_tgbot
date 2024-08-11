@@ -16,15 +16,32 @@ AUTH_DATA_FNAME = 'auth_data.txt' # put there info in format {name} {surname} {p
 
 TOTAL_DAYS_WITH_EVENTS = 24 # Deprecated
 
+UTC_TIME_SHIFT = datetime.timedelta(hours=7) # -shift to datetime.datetime.now() FIXME
 TIMEZONE = pytz.timezone('Asia/Novosibirsk')
 DATETIME_INPUT_FORMAT = "%H:%M %d"
 DATETIME_HUMAN_FORMAT = "час:минута день (Пример: 14:00 24)"
 
+DAILY_QUESTIONS_LIMIT = 3 # Limit of questions to be asked by each user
+QUESTION_REQUEST_EXPIRATION_TIME = datetime.timedelta(hours=12)
+
 DEBUG_MODE = '--debug' in sys.argv
 
-DAILY_NEWSLETTER_TIME = datetime.time(7, 0, 0, 0, tzinfo=TIMEZONE)
-KOMSA_CALL_COOLDOWN = datetime.timedelta(days=1)
-KOMSA_CALL_REQUEST_EXPIRATION_TIME = datetime.timedelta(days=2)
+MESSAGE_FLOOD_LIMIT = 50 # Amount of users to get newsletter per minute
+FLOOD_COOLDOWN = 65 # in seconds (used when sending messages to many users at a time)
+
+if DEBUG_MODE:
+	now = datetime.datetime.now()
+	DAILY_NEWSLETTER_TIME = datetime.time(now.hour,
+										  now.minute,
+										  now.second + 10,
+										  0,
+										  tzinfo=TIMEZONE)
+else:
+	DAILY_NEWSLETTER_TIME = datetime.time(6, 50, 0, 0, tzinfo=TIMEZONE)
+
+KOMSA_CALL_COOLDOWN = datetime.timedelta(hours=18)
+NO_CALL_COOLDOWN = "--no-call-cooldown" in sys.argv
+KOMSA_CALL_REQUEST_EXPIRATION_TIME = datetime.timedelta(hours=15)
 
 if DEBUG_MODE:
 	_debug_time = datetime.datetime.now()
@@ -73,6 +90,14 @@ class BUTTON_NAMINGS:
 	edit_komsa_call_description = "Изменить описание"
 	hide_event                  = "Скрыть мероприятие"
 	reveal_event                = "Раскрыть мероприятие"
+	ask_question                = "Задать вопрос комсе"
+	answer_question             = "Ответить на вопрос"
+	list_pending_quiestions     = "Список вопросов ожидающих ответа"
+	who_called_me               = "Кто из лшат меня пригласил?"
+	delete_meme_offer           = "Отметить как просмотренный (удалить из списка)"
+	meme_offer                  = "Предложить мем комсе"
+	see_offered_memes           = "Посмотреть предложку мемов"
+	temprorary_unavalible       = "Временно не доступно"
 
 
 MISC_MESSAGES = {
@@ -97,6 +122,29 @@ MISC_MESSAGES = {
 	"call_komsa_description":"Отправьте дополнительную информацию: укажите желаемое место встречи (блок), если вы хотите вызвать несколько комсят, то сколько и каких",
 	"hide_event":"Вы скрыли мероприятие от летнешкольников",
 	"reveal_event":"Теперь это мероприятие смогут увидеть летнешкольники",
+	"ask_question":"Напишите вопрос, который вы хотели бы задать <b>Комсотряду</b>\nБудте осторожны с выбором манеры общения, напомним, что вы прошли авторизацию, указав там информацию о себе)\n\n<b>Внимание!</b> Поддерживаются только текстовые вопросы, картинки и прочие медиа отправить не выйдет",
+	"questions_was_sent":"Ваш вопрос был отправлен комсотряду, ответ придёт вам сюда же.\nУ вас осталось ещё {} вопросов на сегодня",
+	"questions_limit_was_exceeded":"Вы <b>достигли лимита</b> вопросов на сегодня, возвращайтесь завтра утром)",
+	"asked_question":"Лшонок {} {} из класса {} задал комсе вопрос:\n\n{}",
+	"question_has_been_answered":"На этот вопрос уже ответили",
+	"answer_was_sent":"Ваш ответ был передан летнешкольнику",
+	"authorization_required":"Чтобы воспользоваться этой функцией, пожалуйста, <b>пройдите авторизацию</b>",
+	"enter_question_answer":"Введите ответ на вопрос от {} {} из {}\n\n{}",
+	"answered_question":"Комсёнок {} {} ответил вам следующее:\n\n{}",
+	"list_pending_quiestions":"Вот список вопросов комсе, ожидающих ответа. Нажмите на любую кнопку, чтобы увидеть вопрос и дать на него ответ",
+	"personal_message_was_sent":"Ваше сообщение было доставлено пользователю {} {} из класса {}",
+	"send_personal":"В первой строке введите Имя_Пользователя Фамилия_пользователя, а на следующей сообщение, которое хотите доставить",
+	"no_user_with_such_credentials":"К сожалению пользователя с таким именем не нашлось",
+	"user_was_banned":"Пользователь {} {} из класса {} был успешно {}",
+	"ban_user":"Введите Имя_Пользователя Фамилия_пользователя, которого вы хотите заблокировать/разблокировать",
+	"you_were_banned":"Вы были заблокированы нашей системой пресечения нарушений, поэтому эта функция на данный момент вам не доступна",
+	"offer_meme":"Отправьте мем, который вы хотели вы предложить. Это может быть картинка или просто текст",
+	"offered_meme_was_sent":"Предложенный мем был отправлен.",
+	"no_memes_were_offered":"Предложка с мемами пока что пуста",
+	"send_all":"Отправьте сообщение/фото, которое вы бы хотели отправить всем пользователям. Будте бдительны! Операция необратима!",
+	"sending_message_to_everyone":"Началась отправка всем пользователям",
+	"notify_about_call_expiration":"Спешу вас уведомить, что на время вашего запроса о приграшении комсёнка {} {}, к сожалению, истекло, на него так никто и не ответил.\nВам снова доступна функция приглашения комсёнка",
+	"temprorary_unavalible":"Функция временно не доступна",
 }
 
 ROLE_MAPPING = {
