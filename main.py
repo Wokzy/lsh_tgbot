@@ -1,6 +1,7 @@
 
 import sys
 import events
+import random
 import asyncio
 import datetime
 import bot_functions
@@ -62,6 +63,8 @@ from utils import (
 	print_komsa_description,
 	send_photo,
 )
+
+from modules import wops
 
 
 __author__ = 'Yegor Yershov'
@@ -126,21 +129,6 @@ class BotUser:
 		await context.bot.send_message(context._chat_id, text=text, reply_markup=reply_markup)
 
 
-	# def setup_daily_newsletter(self, context, daily_newsletter):
-	# 	self.notifications_flag = True
-
-	# 	job_name = f"newsletter_{self.chat_id}_{self.user_id}"
-
-	# 	if len(context.job_queue.get_jobs_by_name(job_name)) > 0:
-	# 		return
-
-	# 	context.job_queue.run_daily(daily_newsletter,
-	# 						DAILY_NEWSLETTER_TIME,
-	# 						chat_id=self.chat_id,
-	# 						user_id=self.user_id,
-	# 						name=job_name)
-
-
 	def setup_event_notifications(self, context, event_notification):
 		context.job_queue.run_repeating(
 			callback=event_notification,
@@ -190,6 +178,10 @@ class Bot:
 
 		self.__refreshed = False
 
+		# ====== Module Inclusion ====== FIXME ============
+
+		self.wops = wops.WOPSModule(self.connected_users)
+
 
 	def save_all_data(self) -> None:
 		# self.static_data['connected_users'] = self.connected_users
@@ -198,6 +190,8 @@ class Bot:
 		self.static_data['pending_questions'] = self.pending_questions
 		self.static_data['meme_offers'] = self.meme_offers
 
+		if CONFIG['MODULES']['wops']:
+			self.wops.save()
 
 		save_events(self.event_mapping)
 		save_users(list(self.connected_users.values()))
@@ -230,6 +224,14 @@ class Bot:
 			if user.notifications_flag:
 				# user.setup_daily_newsletter(context, self.daily_newsletter)
 				user.setup_event_notifications(context, self.event_notification)
+
+		_delete = []
+		for user_id in self.connected_users.keys():
+			if self.connected_users[user_id].chat_id == 0:
+				_delete.append(user_id)
+
+		for user_id in _delete:
+			del self.connected_users[user_id]
 
 		self.__refreshed = True
 		# print(context.job_queue.jobs())
@@ -426,8 +428,8 @@ class Bot:
 		else:
 			user = self.connected_users[context._user_id]
 
-			if user.user_mode == 'aipt':
-				await self.aipt.aipt_message_handler(update, context)
+			if user.user_mode == 'wops':
+				await self.wops.wops_message_handler(update, context)
 				return
 
 			if user.modified_event is not None:
@@ -467,8 +469,14 @@ class Bot:
 		await context.bot.send_message(context._chat_id, text = "echo")
 		# await self.main_menu(update, context)
 		await context.bot.answer_callback_query(update.callback_query.id)
-		# print(context.job_queue.jobs())
 		print(self.connected_users[context._user_id].notify_events)
+
+		# if DEBUG_MODE:
+		# 	print(context.job_queue.jobs())
+		# 	print(len(self.connected_users))
+		# 	new_user = BotUser(user_id=random.randint(1, 1<<31))
+		# 	self.connected_users[new_user.user_id] = new_user
+		# 	print(len(self.connected_users))
 
 
 	async def main_menu(self, update, context, force_message = False) -> None:
@@ -503,6 +511,9 @@ class Bot:
 							callback_data='_change_user_state authorization user_authorization')])
 		if context._user_id in CONFIG['ROOT_USERS']:
 			keyboard.insert(0, [InlineKeyboardButton(BUTTON_NAMINGS.echo, callback_data='echo')])
+
+		if CONFIG['MODULES']['wops']:
+			keyboard.insert(0, [InlineKeyboardButton(wops.MODULE_USER_MODE_NAME, callback_data='wops_enter')])
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 
@@ -1482,18 +1493,20 @@ def main():
 
 	application = Application.builder().token(config['BOT_TOKEN']).read_timeout(7).get_updates_read_timeout(42).build()
 
-	application.add_handler(CommandHandler("start", bot.start_session))
-	application.add_handler(CommandHandler("main_menu", bot.main_menu))
-	application.add_handler(CommandHandler("refresh", bot.refresh))
-	application.add_handler(CommandHandler("save_all", bot.async_save))
-	application.add_handler(CommandHandler("send_all", bot.init_send_all))
-	application.add_handler(CommandHandler("user_count", bot.user_count))
-	application.add_handler(CommandHandler("send_personal", bot.send_personal_message))
-	application.add_handler(CommandHandler("ban_user", bot.ban_user))
-	application.add_handler(CommandHandler("print_call_requests", bot.print_call_requests))
+	command_handlers = {
+		"start"               : bot.start_session,
+		"main_menu"           : bot.main_menu,
+		"refresh"             : bot.refresh,
+		"save_all"            : bot.async_save,
+		"send_all"            : bot.init_send_all,
+		"user_count"          : bot.user_count,
+		"send_personal"       : bot.send_personal_message,
+		"ban_user"            : bot.ban_user,
+		"print_call_requests" : bot.print_call_requests,
+	}
 
-	application.add_handler(MessageHandler(filters.PHOTO, bot.handle_message))
-	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
+	for command, handler in command_handlers.items():
+		application.add_handler(CommandHandler(command, handler))
 
 	callback_handlers = {
 			bot.echo                             : 'echo',
@@ -1520,13 +1533,25 @@ def main():
 			bot.meme_offering                    : "meme_offering",
 			bot.see_offered_memes                : "see_offered_memes",
 			bot_functions.callback_response_stub : "callback_response_stub",
+			bot._change_user_state               : "_change_user_state",
 	}
 
 	for function, pattern in callback_handlers.items():
 		application.add_handler(CallbackQueryHandler(function, pattern=pattern))
 
-	application.add_handler(CallbackQueryHandler(bot._change_user_state, pattern='_change_user_state'))
 
+	# ========= Modules handlers =========
+
+	wops_command_handlers, wops_callback_handlers = wops.get_handlers(bot.wops)
+
+	for command, handler in wops_command_handlers.items():
+		application.add_handler(CommandHandler(command, handler))
+
+	for function, pattern in wops_callback_handlers.items():
+		application.add_handler(CallbackQueryHandler(function, pattern=pattern))
+
+	application.add_handler(MessageHandler(filters.PHOTO, bot.handle_message))
+	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
 
 	print(f'{clr.cyan}Bot is online')
 

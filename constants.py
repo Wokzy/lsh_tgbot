@@ -3,8 +3,9 @@ import sys
 import pytz
 import datetime
 
-EVENTS_DIR = 'events/'
-IMAGES_DIR = 'images/'
+EVENTS_DIR  = 'events/'
+IMAGES_DIR  = 'images/'
+MODULES_DIR = 'modules/'
 
 EVENTS_FNAME = 'events_data.bin'
 EVENTS_JSON_FNAME = 'events_data.json'

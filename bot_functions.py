@@ -7,13 +7,16 @@ import random
 import pickle
 import datetime
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+	InlineKeyboardButton,
+	InlineKeyboardMarkup
+)
 
 from constants import (
 	BUTTON_NAMINGS,
 	MISC_MESSAGES,
 	AUTH_DATA_FNAME,
-	)
+)
 
 
 CONFIG = utils.read_config()
