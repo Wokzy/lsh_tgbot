@@ -41,7 +41,7 @@ else:
 
 KOMSA_CALL_COOLDOWN = datetime.timedelta(hours=18)
 NO_CALL_COOLDOWN = "--no-call-cooldown" in sys.argv
-KOMSA_CALL_REQUEST_EXPIRATION_TIME = datetime.timedelta(hours=12)
+KOMSA_CALL_REQUEST_EXPIRATION_TIME = datetime.timedelta(hours=15)
 
 if DEBUG_MODE:
 	_debug_time = datetime.datetime.now()

@@ -417,15 +417,6 @@ class Bot:
 		for user_id in self.connected_users.keys():
 			self.connected_users[user_id].questions_limit = DAILY_QUESTIONS_LIMIT
 
-		# =========== MOVE SOMEWHERE ELSE ============
-		_delete = []
-		for request in self.pending_questions.values():
-			if (datetime.datetime.now() - request.creation_date) > QUESTION_REQUEST_EXPIRATION_TIME:
-				_delete.append(request.request_id)
-
-		for request_id in _delete:
-			del self.pending_questions[request_id]
-
 
 	async def handle_message(self, update, context) -> None:
 		answer_text = None
@@ -949,6 +940,9 @@ class Bot:
 		for key, request in self.pending_call_requests.items():
 			try:
 				if (datetime.datetime.now() - request.creation_date) > KOMSA_CALL_REQUEST_EXPIRATION_TIME:
+					await bot_functions.notify_about_call_expiration(update, context, request=request,
+																	 sender=self.connected_users[request.sender_id],
+																	 reciever=self.connected_users[request.reciever_id])
 					_delete.append(key)
 				elif request._filally_confirmed:
 					_delete.append(key)
@@ -1044,7 +1038,13 @@ class Bot:
 		root = self.connected_users[request.reciever_id]
 
 		if state == 'confirm':
-			await update.callback_query.edit_message_text(text=f"{request.description}\n\nНе забудте прийти")
+			confirm_text = "Пригласитель:{} {} из {}\nОписание:{}\n\nНе забудте прийти".format(
+													sender.auth_data['name'],
+													sender.auth_data['surname'],
+													sender.auth_data['grade'],
+													request.description)
+
+			await update.callback_query.edit_message_text(text=confirm_text)
 			request._filally_confirmed = True
 
 			text = f"Комсёнок {root.auth_data['name']} {root.auth_data['surname']} к вам придёт, ждите"
@@ -1067,9 +1067,12 @@ class Bot:
 				continue
 
 			if user.auth_data['grade'] == sender.auth_data['grade']:
-				await context.bot.send_message(user.chat_id,
-											   text=tutor_text,
-											   reply_markup=bot_functions.main_menu_keyboard())
+				try:
+					await context.bot.send_message(user.chat_id,
+												   text=tutor_text,
+												   reply_markup=bot_functions.main_menu_keyboard())
+				except:
+					pass
 
 
 		del self.pending_call_requests[request_id]
@@ -1245,6 +1248,16 @@ class Bot:
 
 
 	async def list_pending_quiestions(self, update, context):
+
+		# =========== MOVE SOMEWHERE ELSE ============
+		_delete = []
+		for request in self.pending_questions.values():
+			if (datetime.datetime.now() - request.creation_date) > QUESTION_REQUEST_EXPIRATION_TIME:
+				_delete.append(request.request_id)
+
+		for request_id in _delete:
+			del self.pending_questions[request_id]
+		# =====================================
 
 		await context.bot.answer_callback_query(update.callback_query.id)
 		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
