@@ -940,14 +940,16 @@ class Bot:
 		for key, request in self.pending_call_requests.items():
 			try:
 				if (datetime.datetime.now() - request.creation_date) > KOMSA_CALL_REQUEST_EXPIRATION_TIME:
+					_delete.append(key)
 					await bot_functions.notify_about_call_expiration(update, context, request=request,
 																	 sender=self.connected_users[request.sender_id],
 																	 reciever=self.connected_users[request.reciever_id])
-					_delete.append(key)
 				elif request._filally_confirmed:
 					_delete.append(key)
 			except AttributeError:
 				_delete.append(key)
+			except Exception as e:
+				print(e)
 
 		for item in _delete:
 			del self.pending_call_requests[item]
@@ -993,10 +995,16 @@ class Bot:
 						 InlineKeyboardButton(">", callback_data=f'call_komsa show {next_komsa_id}')]]
 
 			if user.role == 'user' and user.auth_data and CONFIG['ALLOW_INVITATIONS']:
+				_flag = True
 				if not bot_functions.check_call_request_sender(self.pending_call_requests, sender_id=context._user_id):
 					if NO_CALL_COOLDOWN or datetime.datetime.now() >= self.call_komsa_cooldown[context._user_id]:
 						keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.call_komsa,
 															  callback_data=f'user_confirm_komsa_call default {komsa_id}')])
+						_flag = False
+
+				if _flag:
+					keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.temprorary_unavalible,
+														  callback_data=f'callback_response_stub temprorary_unavalible')])
 
 			await print_komsa_description(context,
 										  self.komsa[komsa_id],
@@ -1488,29 +1496,30 @@ def main():
 	application.add_handler(MessageHandler(filters.TEXT, bot.handle_message))
 
 	callback_handlers = {
-			bot.echo                       : 'echo',
-			bot.main_menu                  : 'main_menu',
-			bot.get_events                 : 'get_events',
-			bot.save_modified_event        : 'save_modified_event',
-			bot.decline_modified_event     : 'decline_modified_event',
-			bot.event_modification         : 'event_modification',
-			bot.remove_event               : 'remove_event',
-			bot.user_settings              : 'user_settings',
-			bot.edit_newsletter            : 'edit_newsletter',
-			bot.canteen_menu               : 'canteen_menu',
-			bot.setup_notification         : 'setup_notification',
-			bot.update_komsa_description   : 'update_komsa_description',
-			bot.faq                        : 'faq',
-			bot.call_komsa                 : 'call_komsa',
-			bot.confirm_call_from_tutor    : "confirm_call_from_tutor",
-			bot.confirm_call_from_root     : "confirm_call_from_root",
-			bot.user_confirm_komsa_call    : "user_confirm_komsa_call",
-			bot.ask_question               : "ask_question",
-			bot.answer_question            : "answer_question",
-			bot.list_pending_quiestions    : "list_pending_quiestions",
-			bot.who_called_me              : "who_called_me",
-			bot.meme_offering              : "meme_offering",
-			bot.see_offered_memes          : "see_offered_memes",
+			bot.echo                             : 'echo',
+			bot.main_menu                        : 'main_menu',
+			bot.get_events                       : 'get_events',
+			bot.save_modified_event              : 'save_modified_event',
+			bot.decline_modified_event           : 'decline_modified_event',
+			bot.event_modification               : 'event_modification',
+			bot.remove_event                     : 'remove_event',
+			bot.user_settings                    : 'user_settings',
+			bot.edit_newsletter                  : 'edit_newsletter',
+			bot.canteen_menu                     : 'canteen_menu',
+			bot.setup_notification               : 'setup_notification',
+			bot.update_komsa_description         : 'update_komsa_description',
+			bot.faq                              : 'faq',
+			bot.call_komsa                       : 'call_komsa',
+			bot.confirm_call_from_tutor          : "confirm_call_from_tutor",
+			bot.confirm_call_from_root           : "confirm_call_from_root",
+			bot.user_confirm_komsa_call          : "user_confirm_komsa_call",
+			bot.ask_question                     : "ask_question",
+			bot.answer_question                  : "answer_question",
+			bot.list_pending_quiestions          : "list_pending_quiestions",
+			bot.who_called_me                    : "who_called_me",
+			bot.meme_offering                    : "meme_offering",
+			bot.see_offered_memes                : "see_offered_memes",
+			bot_functions.callback_response_stub : "callback_response_stub",
 	}
 
 	for function, pattern in callback_handlers.items():

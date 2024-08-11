@@ -240,3 +240,24 @@ async def authorize_user(user, update, context) -> bool:
 
 	return True
 
+
+async def notify_about_call_expiration(update, context, request, sender, reciever):
+	""" Notify user about call komsa request expiration """
+
+	text = MISC_MESSAGES['notify_about_call_expiration'].format(reciever.auth_data['name'],
+																reciever.auth_data['surname'])
+
+	await context.bot.send_message(sender.chat_id,
+								   text=text)
+
+
+async def callback_response_stub(update, context):
+	""" Reponse with text on callback query """
+
+	text = None
+
+	data = update.callback_query.data.split(' ')
+	if len(data) > 1:
+		text = MISC_MESSAGES[data[1]]
+
+	await context.bot.answer_callback_query(update.callback_query.id, text=text)
