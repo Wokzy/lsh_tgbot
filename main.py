@@ -509,6 +509,8 @@ class Bot:
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.list_pending_quiestions, callback_data = 'list_pending_quiestions')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.who_called_me, callback_data = 'who_called_me')])
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.see_offered_memes, callback_data='see_offered_memes default')])
+		elif user.role == 'tutor':
+			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.check_invitations_tutor, callback_data='check_invitations_tutor')])
 		if not user.auth_data and self.connected_users[context._user_id].role != 'root':
 			keyboard.append([InlineKeyboardButton(BUTTON_NAMINGS.user_authorization,
 							callback_data='_change_user_state authorization user_authorization')])
@@ -1532,6 +1534,45 @@ class Bot:
 			del self.meme_offers[offer_id]
 
 
+	async def check_invitations_tutor(self, update, context):
+		await context.bot.answer_callback_query(update.callback_query.id)
+		user = self.connected_users[context._user_id]
+
+		data = update.callback_query.data.split(' ')
+		if len(data) > 1:
+			request = self.pending_call_requests[int(data[1])]
+			sender = self.connected_users[request.sender_id]
+			reciever = self.connected_users[request.reciever_id]
+			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')],
+						[InlineKeyboardButton(BUTTON_NAMINGS.allow_call_tutor, callback_data=f"confirm_call_from_tutor confirm {request.request_id}"),
+						 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_tutor, callback_data=f"confirm_call_from_tutor decline {request.request_id}")]]
+
+			keyboard = InlineKeyboardMarkup(keyboard)
+			text = f'{sender.auth_data["grade"]} {sender.auth_data["name"]} {sender.auth_data["surname"]} ' + \
+				   f'приглашает комсёнка {reciever.auth_data["name"]} {reciever.auth_data["surname"]} ' + \
+				   f'со следующим описанием:\n\n{request.description}'
+			await context.bot.send_message(context._chat_id,
+										   text=text,
+										   reply_markup=keyboard)
+			return
+
+		called = []
+		for request in self.pending_call_requests.values():
+			if self.connected_users[request.sender_id].auth_data['grade'] == user.auth_data['grade'] and not request.confirmed_by_tutor:
+				called.append(request)
+
+		text = 'Вот список ваших детей, которые ждут разрешения на приглашение комсёнка:'
+
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')]]
+		for request in called:
+			sender = self.connected_users[request.sender_id]
+			button_name = f'{sender.auth_data["grade"]} {sender.auth_data["name"]} {sender.auth_data["surname"]}'
+			keyboard.append([InlineKeyboardButton(button_name, callback_data=f'check_invitations_tutor {request.request_id}')])
+
+		keyboard = InlineKeyboardMarkup(keyboard)
+		await context.bot.send_message(context._chat_id, text=text, reply_markup=keyboard)
+
+
 
 
 
@@ -1584,6 +1625,7 @@ def main():
 			bot.see_offered_memes                : "see_offered_memes",
 			bot_functions.callback_response_stub : "callback_response_stub",
 			bot.comment_call                     : "comment_call",
+			bot.check_invitations_tutor          : "check_invitations_tutor",
 	}
 
 	for function, pattern in callback_handlers.items():
