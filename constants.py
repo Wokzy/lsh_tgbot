@@ -99,6 +99,7 @@ class BUTTON_NAMINGS:
 	meme_offer                  = "Предложить мем комсе"
 	see_offered_memes           = "Посмотреть предложку мемов"
 	temprorary_unavalible       = "Временно не доступно"
+	comment_call                = "Отправить сообщение"
 
 
 MISC_MESSAGES = {

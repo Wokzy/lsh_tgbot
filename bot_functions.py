@@ -100,7 +100,8 @@ async def send_confirm_call_message_to_root(users:dict, request:CallKomsaRequest
 		   f'со следующим описанием:\n\n{request.description}'
 
 	keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.accept_call_root, callback_data=f"confirm_call_from_root confirm {request.request_id}"),
-				 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_root, callback_data=f"confirm_call_from_root decline {request.request_id}")]]
+				 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_root, callback_data=f"confirm_call_from_root decline {request.request_id}")],
+				[InlineKeyboardButton(BUTTON_NAMINGS.comment_call, callback_data=f'comment_call {request.sender_id}')]]
 
 	keyboard = InlineKeyboardMarkup(keyboard)
 

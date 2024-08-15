@@ -454,10 +454,13 @@ class Bot:
 				await self.meme_offering(update, context)
 			elif user.current_state == 'send_all':
 				await self.init_send_all(update, context)
-			elif user.current_state is not None and "answering_question" in user.current_state:
-				await self.answer_question(update, context)
-			elif user.current_state is not None and 'call_komsa_description' in user.current_state:
-				await self.user_confirm_komsa_call(update, context)
+			elif user.current_state is not None:
+				if "answering_question" in user.current_state:
+					await self.answer_question(update, context)
+				elif 'call_komsa_description' in user.current_state:
+					await self.user_confirm_komsa_call(update, context)
+				elif 'comment_call' in user.current_state:
+					await self.comment_call(update, context)
 
 		if answer_text is not None:
 			await context.bot.send_message(update.message.chat.id, text = answer_text)
@@ -1031,11 +1034,13 @@ class Bot:
 
 		if state == 'confirm':
 			await update.callback_query.edit_message_text(text="Вы разрешили")
-			self.pending_call_requests[request_id].confirmed_by_tutor = True
-			await bot_functions.send_confirm_call_message_to_root(
-									users=self.connected_users,
-									request=self.pending_call_requests[request_id],
-									context=context)
+
+			if not self.pending_call_requests[request_id].confirmed_by_tutor:
+				self.pending_call_requests[request_id].confirmed_by_tutor = True
+				await bot_functions.send_confirm_call_message_to_root(
+										users=self.connected_users,
+										request=self.pending_call_requests[request_id],
+										context=context)
 		else:
 			sender = self.connected_users[self.pending_call_requests[request_id].sender_id]
 			tutor = self.connected_users[context._user_id]
@@ -1056,6 +1061,9 @@ class Bot:
 		sender = self.connected_users[request.sender_id]
 		root = self.connected_users[request.reciever_id]
 
+		keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.comment_call, callback_data=f'comment_call {request.sender_id}')]]
+		keyboard = InlineKeyboardMarkup(keyboard)
+
 		if state == 'confirm':
 			confirm_text = "Пригласитель:{} {} из {}\nОписание:{}\n\nНе забудте прийти".format(
 													sender.auth_data['name'],
@@ -1063,14 +1071,18 @@ class Bot:
 													sender.auth_data['grade'],
 													request.description)
 
-			await update.callback_query.edit_message_text(text=confirm_text)
+			await update.callback_query.edit_message_text(text=confirm_text, reply_markup=keyboard)
 			request._filally_confirmed = True
 
 			text = f"Комсёнок {root.auth_data['name']} {root.auth_data['surname']} к вам придёт, ждите"
 			tutor_text = "Комсёнок {} {} сегодня придёт к {} {}"
 			await context.bot.send_message(sender.chat_id, text=text)
 		else:
-			await update.callback_query.edit_message_text(text="Вы отказались прийти")
+			decline_text = "Вы отказались прийти к {} {} из {}".format(
+											sender.auth_data['name'],
+											sender.auth_data['surname'],
+											sender.auth_data['grade'],)
+			await update.callback_query.edit_message_text(text=decline_text, reply_markup=keyboard)
 
 			text = f"К сожалению комсёнок {root.auth_data['name']} {root.auth_data['surname']} к вам не сможет прийти"
 			tutor_text = "Комсёнок {} {} не сможет сегодня прийти к {} {}"
@@ -1109,7 +1121,8 @@ class Bot:
 			sender = self.connected_users[request.sender_id]
 			keyboard = [[InlineKeyboardButton(BUTTON_NAMINGS.main_menu, callback_data='main_menu')],
 						[InlineKeyboardButton(BUTTON_NAMINGS.accept_call_root, callback_data=f"confirm_call_from_root confirm {request.request_id}"),
-						 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_root, callback_data=f"confirm_call_from_root decline {request.request_id}")]]
+						 InlineKeyboardButton(BUTTON_NAMINGS.decline_call_root, callback_data=f"confirm_call_from_root decline {request.request_id}")],
+						[InlineKeyboardButton(BUTTON_NAMINGS.comment_call, callback_data=f'comment_call {request.sender_id}')]]
 
 			keyboard = InlineKeyboardMarkup(keyboard)
 			text = f'{sender.auth_data["grade"]} {sender.auth_data["name"]} {sender.auth_data["surname"]}\n\n{request.description}'
@@ -1133,6 +1146,42 @@ class Bot:
 
 		keyboard = InlineKeyboardMarkup(keyboard)
 		await context.bot.send_message(context._chat_id, text=text, reply_markup=keyboard)
+
+
+	async def comment_call(self, update, context):
+		user = self.connected_users[context._user_id]
+
+		if update.callback_query is not None:
+			await context.bot.answer_callback_query(update.callback_query.id)
+			reciever_id = int(update.callback_query.data.split(' ')[1])
+			reciever = self.connected_users[reciever_id]
+
+			text = "Отправить сообщение летнешкольнику {} {} из {}".format(
+														reciever.auth_data['name'],
+														reciever.auth_data['surname'],
+														reciever.auth_data['grade'])
+			await context.bot.send_message(user.chat_id,
+										   text=text,
+										   reply_markup=bot_functions.main_menu_keyboard())
+
+			user.current_state = f'comment_call {reciever_id}'
+		else:
+			reciever_id = int(user.current_state.split(' ')[1])
+			reciever = self.connected_users[reciever_id]
+			user.current_state = None
+
+			text = "Комсёнок {} {} передаёт вам следующее:\n\n{}".format(
+												user.auth_data['name'],
+												user.auth_data['surname'],
+												update.message.text)
+			result_text = "Сообщение было отправлено пользователю {} {} из {}".format(
+												reciever.auth_data['name'],
+												reciever.auth_data['surname'],
+												reciever.auth_data['grade'])
+			await context.bot.send_message(reciever.chat_id,
+										   text=text)
+			await context.bot.send_message(user.chat_id,
+										   text=result_text)
 
 
 	async def ask_question(self, update, context):
@@ -1352,7 +1401,7 @@ class Bot:
 			name, surname = update.message.text.split(' ')
 
 			for user in self.connected_users.values():
-				if not user.auth_data:
+				if 'name' not in user.auth_data or 'surname' not in user.auth_data:
 					continue
 
 				if user.auth_data['name'] == name and user.auth_data['surname'] == surname:
@@ -1509,6 +1558,7 @@ def main():
 		application.add_handler(CommandHandler(command, handler))
 
 	callback_handlers = {
+			bot._change_user_state               : "_change_user_state",
 			bot.echo                             : 'echo',
 			bot.main_menu                        : 'main_menu',
 			bot.get_events                       : 'get_events',
@@ -1533,7 +1583,7 @@ def main():
 			bot.meme_offering                    : "meme_offering",
 			bot.see_offered_memes                : "see_offered_memes",
 			bot_functions.callback_response_stub : "callback_response_stub",
-			bot._change_user_state               : "_change_user_state",
+			bot.comment_call                     : "comment_call",
 	}
 
 	for function, pattern in callback_handlers.items():
